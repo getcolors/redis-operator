@@ -1,0 +1,6 @@
+{:paths ["src" "test"]
+ :deps {getcolors/redis-operator {:local/root "."}}
+ :tasks {install {:requires ([colors.install :as install]) :task (apply install/install! *command-line-args*)}
+         controller {:requires ([colors.main :as main]) :task (apply main/-main *command-line-args*)}
+         test {:requires ([clojure.test :as t] [colors.redis-test] [colors.probe-test])
+               :task (let [r (t/run-tests 'colors.redis-test 'colors.probe-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))}}}

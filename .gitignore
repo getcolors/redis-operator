@@ -1,0 +1,6 @@
+.envrc.private
+.cpcache/
+.lsp/
+.clj-kondo/
+.colors/
+*.tfstate*
