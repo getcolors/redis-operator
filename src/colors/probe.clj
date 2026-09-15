@@ -25,6 +25,13 @@
   ;; validated probe tokens are appended; no password enters process argv.
   (remote node (str/replace adapter/health-command "PING'" (str "--raw " command "'"))))
 
+(defn require-suspended! [cr]
+  (when-not (and (true? (get-in cr [:spec :suspend]))
+                 (= "Suspended" (get-in cr [:status :phase]))
+                 (= (get-in cr [:metadata :generation]) (get-in cr [:status :observedGeneration]))
+                 (nil? (get-in cr [:metadata :deletionTimestamp])))
+    (throw (ex-info "Backup rehearsal requires acknowledged controller suspension" {}))))
+
 (defn probe [resource namespace operation key value]
   (doseq [v [resource namespace]] (safe-token v))
   (let [result (process/run-with-timeout ["kubectl" "get" "redisdeployment" resource "-n" namespace "-o" "json"] {} 30000)
@@ -47,7 +54,8 @@
                                 (throw (ex-info "Marker write failed" {})))
                               {:marker (redis-command node (str "GET " key))})
              "get-marker" (do (safe-token key) {:marker (redis-command node (str "GET " key))})
-             "rehearse" (let [result (binding [*out* (java.io.StringWriter.) *err* (java.io.StringWriter.)]
+             "rehearse" (let [_ (require-suspended! cr)
+                              result (binding [*out* (java.io.StringWriter.) *err* (java.io.StringWriter.)]
                                        (wf/run redis/workflow (assoc opts :green/event :rehearse)))]
                            {:rehearsalPassed (not (wf/failed? result))})
              (throw (ex-info "Unknown probe operation" {}))))))

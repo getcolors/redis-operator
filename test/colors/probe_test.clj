@@ -17,3 +17,13 @@
     (is (str/includes? @command "export REDISCLI_AUTH="))
     (is (str/ends-with? @command "--raw PING'"))
     (is (not (str/includes? @command "-e REDISCLI_AUTH")))))
+
+(deftest rehearsal-requires-acknowledged-current-suspension
+  (let [cr {:metadata {:generation 2} :spec {:suspend true}
+            :status {:phase "Suspended" :observedGeneration 2}}]
+    (is (nil? (probe/require-suspended! cr)))
+    (doseq [resource [(assoc-in cr [:spec :suspend] false)
+                     (assoc-in cr [:status :phase] "Ready")
+                     (assoc-in cr [:status :observedGeneration] 1)
+                     (assoc-in cr [:metadata :deletionTimestamp] "now")]]
+      (is (thrown? Exception (probe/require-suspended! resource))))))
