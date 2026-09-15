@@ -55,7 +55,12 @@ bb controller --in-cluster colors-redis
 ```
 
 The controller requires `kubectl`, OpenTofu, Ansible, SSH, Redis CLI and AWS CLI.
-The Dockerfile installs this toolchain and tests the pinned source dependencies.
+The Dockerfile installs this toolchain. Run `bb test` on the build host before
+building; the image build does not execute Babashka under QEMU. The controller
+resolves its pinned source dependencies on first startup, requiring outbound
+access to GitHub and the Maven repositories. Git and Java are included for that
+resolution. Validate the resulting image on a native worker of its target
+architecture.
 Build and publish an image for your worker architecture, then deploy by image
 digest. The AWS CLI installer resolves at build time; the image digest pins the
 resulting toolchain. `manifests/crd.yml` registers the resource schema. The installation renderer emits

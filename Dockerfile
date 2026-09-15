@@ -27,7 +27,8 @@ COPY deps.edn bb.edn ./
 COPY src ./src
 COPY test ./test
 COPY manifests ./manifests
-RUN bb test
+# Run bb test on the build host before cross-building. Babashka native-image
+# does not execute reliably under QEMU; the controller runs on native workers.
 ENV COLORS_WORKDIR=/data/work
 ENTRYPOINT ["bb", "controller", "--in-cluster"]
 CMD ["colors-dev"]
