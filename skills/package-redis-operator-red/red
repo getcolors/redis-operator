@@ -40,9 +40,8 @@ import { homedir } from "node:os";
 const PINS = {
   "package-redis-operator-red": "github:getcolors/redis-operator#99e4e44d4ae1c46c3e78d0582ccfab51e77e8971",
   "colors-compute-red": "github:getcolors/colors-compute#7e1c2349388ff2ca8a3da65a0c8cb888315b57f4",
-  // The Red SDK is a peer of colors-compute-red, not a dependency: a cold
-  // cache installs nothing for a peer, so the consumer pins it explicitly, at
-  // the commit red/package.json pins. scripts/launcher.sh checks they agree.
+  // The package declares the SDK dependency. The cache overrides keep that
+  // dependency and Redis's compute dependency on these reviewed commits.
   "red": "github:getcolors/red#f22dc85c9f575e7cb16828f0980eed0456caf9f9",
 };
 
@@ -123,7 +122,16 @@ async function importWorkingTree(redDir, label) {
 function installToCache() {
   const home = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   const root = join(home, "package-redis-operator-red");
-  const key = Bun.hash(JSON.stringify(PINS)).toString(16);
+  // Bun can fail to resolve identical GitHub dependencies declared both here
+  // and by the package. Install the package once and constrain its dependency
+  // graph with overrides; do not duplicate the SDK and compute as direct deps.
+  const manifest = {
+    name: "package-redis-operator-red-cache",
+    private: true,
+    dependencies: { "package-redis-operator-red": PINS["package-redis-operator-red"] },
+    overrides: { red: PINS.red, "colors-compute-red": PINS["colors-compute-red"] },
+  };
+  const key = Bun.hash(JSON.stringify(manifest)).toString(16);
   const target = join(root, key);
   if (existsSync(join(target, "node_modules"))) return { dir: target };
 
@@ -135,7 +143,7 @@ function installToCache() {
   const staging = mkdtempSync(join(root, `.${key}.`));
   writeFileSync(
     join(staging, "package.json"),
-    `${JSON.stringify({ name: "package-redis-operator-red-cache", private: true, dependencies: PINS, overrides: { red: PINS.red, "colors-compute-red": PINS["colors-compute-red"] } }, null, 2)}\n`,
+    `${JSON.stringify(manifest, null, 2)}\n`,
   );
   const installed = Bun.spawnSync([process.execPath, "install"], {
     cwd: staging,
