@@ -10,8 +10,16 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           bb: latest
+      - uses: oven-sh/setup-bun@v2
+      - uses: astral-sh/setup-uv@v6
+      - run: bun install --cwd red --frozen-lockfile
+      - run: uv sync --project blue --frozen
+      - run: bun test --cwd red
+      - run: bun run --cwd red typecheck
+      - run: uv run --project blue pytest blue/tests
       - run: bb test
       - run: bb golden
+      - run: ./scripts/parity.sh
       - run: ./scripts/launcher.sh
       # The image entry point: prove the controller namespaces load from a
       # clean checkout, since the Dockerfile does not execute Babashka.
