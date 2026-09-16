@@ -38,7 +38,7 @@ import { homedir } from "node:os";
 // directory, which would halt Bun's upward resolution of `package-redis-operator-red`
 // and break the development symlink at red/red.
 const PINS = {
-  "package-redis-operator-red": "github:getcolors/redis-operator#7f55d9b64c9050fcc6dab2aaaa585d897a3f09b6",
+  "package-redis-operator-red": "github:getcolors/redis-operator#8251d68edef252902f32da68d4b46ec19e9a760f",
   "colors-compute-red": "github:getcolors/colors-compute#7e1c2349388ff2ca8a3da65a0c8cb888315b57f4",
   // The package declares the SDK dependency. The cache overrides keep that
   // dependency and Redis's compute dependency on these reviewed commits.
