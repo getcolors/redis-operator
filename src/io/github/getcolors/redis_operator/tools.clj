@@ -336,7 +336,9 @@
   (controller-up! opts)
   (let [rehearse? (= "rehearse" operation)
         out (kubectl opts (into ["exec" (str "deployment/" controller-name) "-n" (:namespace opts)
-                                 "--" "bb" "-m" "colors.probe" (:resource-name opts) (:namespace opts) operation]
+                                 "--" "sh" "-c"
+                                 "if [ -d /app/blue ]; then exec /app/blue/.venv/bin/python -m package_redis_operator_blue.probe \"$@\"; elif [ -d /app/red ]; then exec bun /app/red/src/probe.ts \"$@\"; else exec bb -m colors.probe \"$@\"; fi"
+                                 "probe" (:resource-name opts) (:namespace opts) operation]
                                 args)
                      {:request-timeout? false :timeout-ms (if rehearse? 7800000 180000)})]
     (json/parse-string out true)))

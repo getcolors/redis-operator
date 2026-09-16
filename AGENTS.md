@@ -19,8 +19,11 @@ DigitalOcean API, the ownership predicate), `workflow` (preflight and the
 library carries it; `build` reads it from the classpath, never from a working
 tree. The first consumer is `../redis-operator-doks`.
 
-Green only: `green.kubernetes` exists in no other colour, so there is no
-parity suite. `bb test`, `bb golden` and `scripts/launcher.sh` are the nets.
+All three colours have native controllers and Package Skills. Red lives in
+`red/src`, Blue in `blue/src/package_redis_operator_blue`. Run `bb test`,
+`bb golden`, Red tests/typecheck, Blue pytest, `scripts/parity.sh` and
+`scripts/launcher.sh`. Rendered manifest parity is byte for byte.
+The image script takes a third argument `green`, `red` or `blue`.
 
 ## Commands
 

@@ -1,0 +1,41 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "package-redis-operator-red-dev",
+      "dependencies": {
+        "colors-compute-red": "github:getcolors/colors-compute#7e1c2349388ff2ca8a3da65a0c8cb888315b57f4",
+        "package-redis-red": "github:getcolors/redis#520e2613d848ec65afed33dfeab2cbd6c47465aa",
+        "red": "github:getcolors/red#f22dc85c9f575e7cb16828f0980eed0456caf9f9",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.8.3",
+      },
+    },
+  },
+  "overrides": {
+    "colors-compute-red": "github:getcolors/colors-compute#7e1c2349388ff2ca8a3da65a0c8cb888315b57f4",
+    "red": "github:getcolors/red#f22dc85c9f575e7cb16828f0980eed0456caf9f9",
+  },
+  "packages": {
+    "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
+
+    "@types/node": ["@types/node@22.20.3", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-DZmzkmwHzXrLPAXPyKNDzlIwMMUZCVacoD25ywdy5YTKGbOx/2ld+Q38Im2zJ0vBuZP5Prd3VZutKZyXwkOS8A=="],
+
+    "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
+
+    "colors-compute-red": ["colors-compute-red@github:getcolors/colors-compute#7e1c234", { "peerDependencies": { "red": "*" } }, "getcolors-colors-compute-7e1c234", "sha512-XxuUABGhvexyFRTgrcM67RcKdEtJghv3tYRE/FHbhMFfmOR04/JAZh/vK9PEyDo7XAtfHs5a3kSF0RspDefDEA=="],
+
+    "package-redis-red": ["package-redis-red@github:getcolors/redis#520e261", { "dependencies": { "colors-compute-red": "github:getcolors/colors-compute#ae28ea74962bb1897fa6365c143c1d43ac1fe095" }, "peerDependencies": { "red": "*" }, "optionalPeers": ["red"] }, "getcolors-redis-520e261", "sha512-iSvPAh+3/vPPXRTQFhY5ANbO952Ss8ai7QrIy5Cr0EWdlvenQbMZ+WzI/D/LTj/aup2yIfqePAP61eaL4INcvQ=="],
+
+    "red": ["red@github:getcolors/red#f22dc85", { "dependencies": { "zod": "^4.0.0" } }, "getcolors-red-f22dc85", "sha512-pQvHcLZhC7HSCn1y4p5DuARZBJ3rNRM577+wToNQQTWylotOaOobc5JxQI5yhGrF16mh8iTo0ZPap9jzfXJD6A=="],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
+    "undici-types": ["undici-types@6.21.0", "", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
+
+    "zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
+  }
+}

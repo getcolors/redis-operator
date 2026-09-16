@@ -6,4 +6,9 @@
   (cond (seq dirty) (do (binding [*out* *err*] (println "redis-operator working tree is dirty; commit before pinning")) (System/exit 2))
         (not (str/includes? (str remotes) "origin/")) (do (binding [*out* *err*] (println "redis-operator HEAD is not pushed")) (System/exit 2))
         :else (let [s (slurp path) n (str/replace s rx (str "(def ^:private redis-operator-sha \"" sha "\")"))]
-                (spit path n) (println "pinned redis-operator launcher to" (subs sha 0 7)))))
+                (spit path n)
+                (let [red "skills/package-redis-operator-red/red"
+                      blue "skills/package-redis-operator-blue/blue"]
+                  (spit red (str/replace (slurp red) #"(\"package-redis-operator-red\": )(null|\"[^\"]+\")" (str "$1\"github:getcolors/redis-operator#" sha "\"")))
+                  (spit blue (str/replace (slurp blue) #"PIN = (None|\"[a-f0-9]+\")" (str "PIN = \"" sha "\""))))
+                (println "pinned redis-operator launcher to" (subs sha 0 7)))))

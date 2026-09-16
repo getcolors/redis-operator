@@ -1,5 +1,5 @@
 FROM babashka/babashka:1.12.218 AS bb
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS base
 ARG TARGETARCH
 ARG TOFU_VERSION=1.11.5
 ARG KUBECTL_VERSION=v1.36.3
@@ -27,6 +27,8 @@ RUN arch="${TARGETARCH:-amd64}" \
  && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}.zip" -o /tmp/aws.zip \
  && unzip -q /tmp/aws.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/aws.zip
 WORKDIR /app
+
+FROM base AS green
 COPY deps.edn bb.edn ./
 COPY src ./src
 COPY test ./test
@@ -35,3 +37,27 @@ COPY test ./test
 ENV COLORS_WORKDIR=/data/work
 ENTRYPOINT ["bb", "controller", "--in-cluster"]
 CMD ["colors-dev"]
+
+FROM oven/bun:1.3.10 AS bun
+FROM ghcr.io/astral-sh/uv:0.10.2 AS uv
+FROM base AS red
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+COPY package.json ./
+COPY red/package.json red/bun.lock ./red/
+RUN cd red && bun install --frozen-lockfile
+COPY red/src ./red/src
+COPY resources ./resources
+ENV COLORS_WORKDIR=/data/work
+ENTRYPOINT ["bun", "/app/red/src/controller.ts", "--in-cluster"]
+CMD ["colors-dev"]
+
+FROM base AS blue
+COPY --from=uv /uv /usr/local/bin/uv
+COPY blue/pyproject.toml blue/uv.lock ./blue/
+COPY blue/src ./blue/src
+RUN cd blue && uv sync --frozen --no-dev
+ENV COLORS_WORKDIR=/data/work PYTHONUNBUFFERED=1
+ENTRYPOINT ["/app/blue/.venv/bin/python", "-m", "package_redis_operator_blue.controller", "--in-cluster"]
+CMD ["colors-dev"]
+
+FROM green AS default

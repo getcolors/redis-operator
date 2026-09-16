@@ -1,0 +1,25 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+import os
+import subprocess
+import sys
+
+PIN = None
+
+def main():
+    root = os.environ.get("REDIS_OPERATOR_LIB_ROOT")
+    if root:
+        project = root if os.path.isfile(os.path.join(root, "pyproject.toml")) else os.path.join(root, "blue")
+        command = ["uv", "run", "--project", project, "python", "-m", "package_redis_operator_blue"]
+    elif PIN:
+        command = ["uv", "run", "--isolated", "--with", "package-redis-operator-blue @ git+https://github.com/getcolors/redis-operator.git@" + PIN + "#subdirectory=blue", "python", "-m", "package_redis_operator_blue"]
+    else:
+        sys.stderr.write("blue: launcher not pinned; set REDIS_OPERATOR_LIB_ROOT to a checkout\n")
+        raise SystemExit(2)
+    raise SystemExit(subprocess.run([*command, *sys.argv[1:]]).returncode)
+
+if __name__ == "__main__":
+    main()

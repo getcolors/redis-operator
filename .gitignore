@@ -4,3 +4,8 @@
 !.github
 !.dockerignore
 !.nojekyll
+
+node_modules/
+__pycache__/
+*.pyc
+test/fixtures/WORKDIR/

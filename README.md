@@ -1,10 +1,10 @@
 # Redis operator
 
-A Green-only Package Skill in two halves that share one repository and one
+A Green, Red and Blue Package Skill in two halves that share one repository and one
 pin:
 
-- **The controller image.** A Green Kubernetes controller that reconciles
-  `RedisDeployment` custom resources by running the Redis package's Clojure
+- **The controller image.** A native Kubernetes controller that reconciles
+  `RedisDeployment` custom resources by running the Redis package's matching Clojure, TypeScript or Python
   workflow. It provisions one Redis 7.2 Droplet on DigitalOcean per resource;
   Redis does not run in the controller Pod. `bb controller --in-cluster` is
   the image entry point.
@@ -210,3 +210,22 @@ is 10800 s, above the sum of the package's Ansible (7200 s) and OpenTofu plan
 or CI package executions must not overlap operator management of the same
 profile; `rehearse` is the sanctioned way to run the package against a managed
 profile, and suspension is a one-shot acknowledgement, not a lease.
+
+## Red and Blue
+
+Install `package-redis-operator-red` or `package-redis-operator-blue` and copy
+its launcher to the deployment root. Every colour supports the same seven
+verbs and desired state. The CLI can operate any of the three controller
+images; probes select the runtime installed in the running image.
+
+Build images with `scripts/image.sh REGISTRY SHA red` (or `blue` or `green`).
+Pin the printed digest in `image`. Each native controller calls its matching
+Redis workflow and Kubernetes SDK. Successful convergence records are colour
+specific, so switching controller language performs one convergence before
+subsequent observations reuse its record. Only one controller may own a
+resource at a time.
+
+Checks: `bb test`, `bb golden`, `cd red && bun test && bun run typecheck`,
+`cd blue && uv run pytest`, `scripts/parity.sh` and `scripts/launcher.sh`.
+Parity compares the complete rendered manifests byte for byte, including a
+non-default namespace.

@@ -1,0 +1,24 @@
+[project]
+name = "package-redis-operator-blue"
+version = "0.1.0"
+description = "Redis operator and package lifecycle in Python"
+requires-python = ">=3.11"
+dependencies = ["blue", "package-redis-blue", "colors-compute-blue", "PyYAML>=6"]
+[tool.uv.sources]
+blue = { git = "https://github.com/getcolors/blue.git", rev = "9bcd82890f04387256ba9a302d37eb30a638ae56" }
+package-redis-blue = { git = "https://github.com/getcolors/redis.git", rev = "520e2613d848ec65afed33dfeab2cbd6c47465aa", subdirectory = "blue" }
+colors-compute-blue = { git = "https://github.com/getcolors/colors-compute.git", rev = "7e1c2349388ff2ca8a3da65a0c8cb888315b57f4", subdirectory = "blue" }
+[tool.uv]
+override-dependencies = ["blue @ git+https://github.com/getcolors/blue.git@9bcd82890f04387256ba9a302d37eb30a638ae56", "colors-compute-blue @ git+https://github.com/getcolors/colors-compute.git@7e1c2349388ff2ca8a3da65a0c8cb888315b57f4#subdirectory=blue"]
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[tool.hatch.metadata]
+allow-direct-references = true
+[tool.hatch.build.targets.wheel]
+packages = ["src/package_redis_operator_blue"]
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

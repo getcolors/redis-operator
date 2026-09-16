@@ -1,0 +1,21 @@
+{
+  "name": "package-redis-operator-red",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./red/src/index.ts"
+  },
+  "files": [
+    "red/src",
+    "resources"
+  ],
+  "dependencies": {
+    "red": "github:getcolors/red#f22dc85c9f575e7cb16828f0980eed0456caf9f9",
+    "package-redis-red": "github:getcolors/redis#520e2613d848ec65afed33dfeab2cbd6c47465aa",
+    "colors-compute-red": "github:getcolors/colors-compute#7e1c2349388ff2ca8a3da65a0c8cb888315b57f4"
+  },
+  "overrides": {
+    "red": "github:getcolors/red#f22dc85c9f575e7cb16828f0980eed0456caf9f9",
+    "colors-compute-red": "github:getcolors/colors-compute#7e1c2349388ff2ca8a3da65a0c8cb888315b57f4"
+  }
+}

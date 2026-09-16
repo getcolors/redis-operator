@@ -22,3 +22,16 @@ if (cd "$tmp" && env -i PATH="$PATH" HOME="$HOME" REDIS_OPERATOR_LIB_ROOT="$root
   echo 'launcher: COLORS_PAR_PROFILE must be refused' >&2; exit 1
 fi
 echo 'launcher: all checks passed'
+for color in red blue; do
+  cp "$root/skills/package-redis-operator-$color/$color" "$tmp/$color"
+  (cd "$tmp" && env -i PATH="$PATH" HOME="$HOME" REDIS_OPERATOR_LIB_ROOT="$root" "./$color" build >/dev/null)
+  (cd "$tmp" && env -i PATH="$PATH" HOME="$HOME" REDIS_OPERATOR_LIB_ROOT="$root" "./$color" create --dry-run >/dev/null)
+  for event in delete drill; do
+    if (cd "$tmp" && env -i PATH="$PATH" HOME="$HOME" REDIS_OPERATOR_LIB_ROOT="$root" "./$color" "$event" --dry-run >/dev/null 2>&1); then
+      echo "$color: $event guard failed" >&2; exit 1
+    fi
+  done
+  if (cd "$tmp" && env -i PATH="$PATH" HOME="$HOME" REDIS_OPERATOR_LIB_ROOT="$root" COLORS_PAR_PROFILE=x "./$color" build >/dev/null 2>&1); then
+    echo "$color: profile guard failed" >&2; exit 1
+  fi
+done

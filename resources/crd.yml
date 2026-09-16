@@ -1,0 +1,149 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: redisdeployments.colors.getcolors.ai
+spec:
+  group: colors.getcolors.ai
+  scope: Namespaced
+  names:
+    plural: redisdeployments
+    singular: redisdeployment
+    kind: RedisDeployment
+    shortNames:
+    - rd
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: State
+      type: string
+      jsonPath: .spec.state
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Profile
+      type: string
+      jsonPath: .status.profile
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - config
+            properties:
+              state:
+                type: string
+                enum:
+                - running
+                default: running
+              suspend:
+                type: boolean
+                default: false
+              reconcileInterval:
+                type: string
+                pattern: ^[1-9][0-9]*(ms|s|m|h)$
+                default: 60s
+              deletionPolicy:
+                type: string
+                enum:
+                - Retain
+                - Destroy
+                default: Retain
+              config:
+                type: object
+                required:
+                - redis-image
+                - redis-port
+                - redis-backup-r2-bucket
+                - redis-backup-r2-endpoint
+                - redis-backup-r2-region
+                - redis-backup-oncalendar
+                - redis-backup-retention-days
+                - redis-backup-max-age-hours
+                - digitalocean-region
+                - digitalocean-size
+                - digitalocean-image
+                - digitalocean-ssh-sources
+                - r2-bucket
+                - r2-endpoint
+                x-kubernetes-validations:
+                - rule: has(self.profile) == has(oldSelf.profile)
+                  message: profile presence is immutable
+                properties:
+                  profile:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]*$
+                    x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: profile is immutable
+                  provider-compute:
+                    type: string
+                    enum:
+                    - digitalocean
+                    default: digitalocean
+                  provider-backend:
+                    type: string
+                    enum:
+                    - r2
+                    default: r2
+                  redis-image:
+                    type: string
+                  redis-port:
+                    type: integer
+                    minimum: 1
+                    maximum: 65535
+                  redis-backup-r2-bucket:
+                    type: string
+                  redis-backup-r2-endpoint:
+                    type: string
+                    pattern: ^https://[^\s]+$
+                  redis-backup-r2-region:
+                    type: string
+                  redis-backup-oncalendar:
+                    type: string
+                  redis-backup-retention-days:
+                    type: integer
+                    minimum: 1
+                  redis-backup-max-age-hours:
+                    type: integer
+                    minimum: 1
+                  digitalocean-region:
+                    type: string
+                  digitalocean-size:
+                    type: string
+                  digitalocean-image:
+                    type: string
+                  digitalocean-ssh-sources:
+                    type: array
+                    items:
+                      type: string
+                    minItems: 1
+                  r2-bucket:
+                    type: string
+                    x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: state backend identity is immutable
+                  r2-endpoint:
+                    type: string
+                    pattern: ^https://[^\s]+$
+                    x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: state backend identity is immutable
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true

@@ -17,7 +17,10 @@ sha=${2:-$(git -C "$root" rev-parse HEAD)}
 if [[ -z ${2:-} && -n $(git -C "$root" status --porcelain) ]]; then
   echo 'image: working tree is dirty; commit first so the revision label is true' >&2; exit 2
 fi
+color=${3:-green}
+case "$color" in green|red|blue) ;; *) echo "invalid color: $color" >&2; exit 2 ;; esac
 ref="$registry/redis-operator"
+if [[ "$color" != green ]]; then ref="$ref-$color"; fi
 # docker runs as root and writes buildx state beside the config it is given;
 # give it a private root-owned copy so nothing root-owned lands in the
 # deployment's .colors/ tree (the doks cleanup could not remove one).
@@ -25,7 +28,7 @@ config=$(mktemp -d)
 trap 'sudo -n rm -rf "$config"' EXIT
 cp "$DOCKER_CONFIG/config.json" "$config/config.json"
 DOCKER_CONFIG=$config
-sudo -n env DOCKER_CONFIG="$DOCKER_CONFIG" docker buildx build --platform linux/amd64 --push \
+sudo -n env DOCKER_CONFIG="$DOCKER_CONFIG" docker buildx build --target "$color" --platform linux/amd64 --push \
   -t "$ref:$sha" --label "org.opencontainers.image.revision=$sha" "$root"
 digest=$(sudo -n env DOCKER_CONFIG="$DOCKER_CONFIG" docker buildx imagetools inspect "$ref:$sha" --format '{{json .Manifest.Digest}}' | tr -d '"')
 echo "image: $ref@$digest"
