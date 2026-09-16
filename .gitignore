@@ -1,6 +1,5 @@
-.envrc.private
-.cpcache/
-.lsp/
-.clj-kondo/
-.colors/
-*.tfstate*
+.*
+!.envrc
+!.gitignore
+!.github
+!.dockerignore

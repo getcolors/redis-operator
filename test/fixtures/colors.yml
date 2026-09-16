@@ -1,0 +1,25 @@
+profile: redis-operator-fixture
+workdir: WORKDIR
+kube-context: do-ams3-doks-fixture
+namespace: colors-redis
+image: registry.digitalocean.com/colors-fixture/redis-operator@sha256:0000000000000000000000000000000000000000000000000000000000000000
+image-pull-secret: colors-fixture
+reconcile-interval: 60s
+deletion-policy: Retain
+compute-prevent-destroy: true
+provider-compute: digitalocean
+provider-backend: r2
+redis-image: docker.io/library/redis:7.2.16@sha256:74566c6910d13ae61e7ce73ebd3127438a1fe805b309b097c323142719ec8a5b
+redis-port: 6379
+redis-backup-r2-bucket: redis-backup
+redis-backup-r2-endpoint: https://example.r2.cloudflarestorage.com
+redis-backup-r2-region: auto
+redis-backup-oncalendar: "*-*-* 00/6:00:00"
+redis-backup-retention-days: 7
+redis-backup-max-age-hours: 8
+digitalocean-region: ams3
+digitalocean-size: s-1vcpu-2gb
+digitalocean-image: ubuntu-24-04-x64
+digitalocean-ssh-sources: [93.184.216.34/32]
+r2-bucket: redis-state
+r2-endpoint: https://example.r2.cloudflarestorage.com

@@ -1,0 +1,18 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          bb: latest
+      - run: bb test
+      - run: bb golden
+      - run: ./scripts/launcher.sh
+      # The image entry point: prove the controller namespaces load from a
+      # clean checkout, since the Dockerfile does not execute Babashka.
+      - run: bb -e "(require 'colors.main 'colors.probe) (println :controller-loads)"

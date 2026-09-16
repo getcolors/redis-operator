@@ -1,0 +1,309 @@
+{
+  "apiVersion" : "v1",
+  "items" : [ {
+    "apiVersion" : "v1",
+    "kind" : "Namespace",
+    "metadata" : {
+      "name" : "colors-redis"
+    }
+  }, {
+    "apiVersion" : "apiextensions.k8s.io/v1",
+    "kind" : "CustomResourceDefinition",
+    "metadata" : {
+      "name" : "redisdeployments.colors.getcolors.ai"
+    },
+    "spec" : {
+      "group" : "colors.getcolors.ai",
+      "names" : {
+        "kind" : "RedisDeployment",
+        "plural" : "redisdeployments",
+        "shortNames" : [ "rd" ],
+        "singular" : "redisdeployment"
+      },
+      "scope" : "Namespaced",
+      "versions" : [ {
+        "additionalPrinterColumns" : [ {
+          "jsonPath" : ".spec.state",
+          "name" : "State",
+          "type" : "string"
+        }, {
+          "jsonPath" : ".status.phase",
+          "name" : "Phase",
+          "type" : "string"
+        }, {
+          "jsonPath" : ".status.profile",
+          "name" : "Profile",
+          "type" : "string"
+        } ],
+        "name" : "v1alpha1",
+        "schema" : {
+          "openAPIV3Schema" : {
+            "properties" : {
+              "apiVersion" : {
+                "type" : "string"
+              },
+              "kind" : {
+                "type" : "string"
+              },
+              "metadata" : {
+                "type" : "object"
+              },
+              "spec" : {
+                "properties" : {
+                  "config" : {
+                    "properties" : {
+                      "digitalocean-image" : {
+                        "type" : "string"
+                      },
+                      "digitalocean-region" : {
+                        "type" : "string"
+                      },
+                      "digitalocean-size" : {
+                        "type" : "string"
+                      },
+                      "digitalocean-ssh-sources" : {
+                        "items" : {
+                          "type" : "string"
+                        },
+                        "minItems" : 1,
+                        "type" : "array"
+                      },
+                      "profile" : {
+                        "maxLength" : 128,
+                        "minLength" : 1,
+                        "pattern" : "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+                        "type" : "string",
+                        "x-kubernetes-validations" : [ {
+                          "message" : "profile is immutable",
+                          "rule" : "self == oldSelf"
+                        } ]
+                      },
+                      "provider-backend" : {
+                        "default" : "r2",
+                        "enum" : [ "r2" ],
+                        "type" : "string"
+                      },
+                      "provider-compute" : {
+                        "default" : "digitalocean",
+                        "enum" : [ "digitalocean" ],
+                        "type" : "string"
+                      },
+                      "r2-bucket" : {
+                        "type" : "string",
+                        "x-kubernetes-validations" : [ {
+                          "message" : "state backend identity is immutable",
+                          "rule" : "self == oldSelf"
+                        } ]
+                      },
+                      "r2-endpoint" : {
+                        "pattern" : "^https://[^\\s]+$",
+                        "type" : "string",
+                        "x-kubernetes-validations" : [ {
+                          "message" : "state backend identity is immutable",
+                          "rule" : "self == oldSelf"
+                        } ]
+                      },
+                      "redis-backup-max-age-hours" : {
+                        "minimum" : 1,
+                        "type" : "integer"
+                      },
+                      "redis-backup-oncalendar" : {
+                        "type" : "string"
+                      },
+                      "redis-backup-r2-bucket" : {
+                        "type" : "string"
+                      },
+                      "redis-backup-r2-endpoint" : {
+                        "pattern" : "^https://[^\\s]+$",
+                        "type" : "string"
+                      },
+                      "redis-backup-r2-region" : {
+                        "type" : "string"
+                      },
+                      "redis-backup-retention-days" : {
+                        "minimum" : 1,
+                        "type" : "integer"
+                      },
+                      "redis-image" : {
+                        "type" : "string"
+                      },
+                      "redis-port" : {
+                        "maximum" : 65535,
+                        "minimum" : 1,
+                        "type" : "integer"
+                      }
+                    },
+                    "required" : [ "redis-image", "redis-port", "redis-backup-r2-bucket", "redis-backup-r2-endpoint", "redis-backup-r2-region", "redis-backup-oncalendar", "redis-backup-retention-days", "redis-backup-max-age-hours", "digitalocean-region", "digitalocean-size", "digitalocean-image", "digitalocean-ssh-sources", "r2-bucket", "r2-endpoint" ],
+                    "type" : "object",
+                    "x-kubernetes-validations" : [ {
+                      "message" : "profile presence is immutable",
+                      "rule" : "has(self.profile) == has(oldSelf.profile)"
+                    } ]
+                  },
+                  "deletionPolicy" : {
+                    "default" : "Retain",
+                    "enum" : [ "Retain", "Destroy" ],
+                    "type" : "string"
+                  },
+                  "reconcileInterval" : {
+                    "default" : "60s",
+                    "pattern" : "^[1-9][0-9]*(ms|s|m|h)$",
+                    "type" : "string"
+                  },
+                  "state" : {
+                    "default" : "running",
+                    "enum" : [ "running" ],
+                    "type" : "string"
+                  },
+                  "suspend" : {
+                    "default" : false,
+                    "type" : "boolean"
+                  }
+                },
+                "required" : [ "config" ],
+                "type" : "object"
+              },
+              "status" : {
+                "type" : "object",
+                "x-kubernetes-preserve-unknown-fields" : true
+              }
+            },
+            "required" : [ "spec" ],
+            "type" : "object"
+          }
+        },
+        "served" : true,
+        "storage" : true,
+        "subresources" : {
+          "status" : { }
+        }
+      } ]
+    }
+  }, {
+    "apiVersion" : "v1",
+    "kind" : "ServiceAccount",
+    "metadata" : {
+      "name" : "colors-redis-operator",
+      "namespace" : "colors-redis"
+    }
+  }, {
+    "apiVersion" : "rbac.authorization.k8s.io/v1",
+    "kind" : "Role",
+    "metadata" : {
+      "name" : "colors-redis-operator",
+      "namespace" : "colors-redis"
+    },
+    "rules" : [ {
+      "apiGroups" : [ "colors.getcolors.ai" ],
+      "resources" : [ "redisdeployments", "redisdeployments/status", "redisdeployments/finalizers" ],
+      "verbs" : [ "get", "list", "watch", "patch", "update" ]
+    } ]
+  }, {
+    "apiVersion" : "rbac.authorization.k8s.io/v1",
+    "kind" : "RoleBinding",
+    "metadata" : {
+      "name" : "colors-redis-operator",
+      "namespace" : "colors-redis"
+    },
+    "roleRef" : {
+      "apiGroup" : "rbac.authorization.k8s.io",
+      "kind" : "Role",
+      "name" : "colors-redis-operator"
+    },
+    "subjects" : [ {
+      "kind" : "ServiceAccount",
+      "name" : "colors-redis-operator",
+      "namespace" : "colors-redis"
+    } ]
+  }, {
+    "apiVersion" : "v1",
+    "kind" : "PersistentVolumeClaim",
+    "metadata" : {
+      "name" : "colors-redis-operator",
+      "namespace" : "colors-redis"
+    },
+    "spec" : {
+      "accessModes" : [ "ReadWriteOnce" ],
+      "resources" : {
+        "requests" : {
+          "storage" : "5Gi"
+        }
+      }
+    }
+  }, {
+    "apiVersion" : "apps/v1",
+    "kind" : "Deployment",
+    "metadata" : {
+      "name" : "colors-redis-operator",
+      "namespace" : "colors-redis"
+    },
+    "spec" : {
+      "replicas" : 1,
+      "selector" : {
+        "matchLabels" : {
+          "app" : "colors-redis-operator"
+        }
+      },
+      "strategy" : {
+        "type" : "Recreate"
+      },
+      "template" : {
+        "metadata" : {
+          "labels" : {
+            "app" : "colors-redis-operator"
+          }
+        },
+        "spec" : {
+          "containers" : [ {
+            "args" : [ "colors-redis" ],
+            "envFrom" : [ {
+              "secretRef" : {
+                "name" : "redis-credentials"
+              }
+            } ],
+            "image" : "registry.digitalocean.com/colors-fixture/redis-operator@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "name" : "controller",
+            "resources" : {
+              "limits" : {
+                "memory" : "2Gi"
+              },
+              "requests" : {
+                "cpu" : "100m",
+                "memory" : "256Mi"
+              }
+            },
+            "securityContext" : {
+              "allowPrivilegeEscalation" : false,
+              "capabilities" : {
+                "drop" : [ "ALL" ]
+              },
+              "seccompProfile" : {
+                "type" : "RuntimeDefault"
+              }
+            },
+            "volumeMounts" : [ {
+              "mountPath" : "/data",
+              "name" : "state"
+            }, {
+              "mountPath" : "/root/.ssh",
+              "name" : "state",
+              "subPath" : "ssh"
+            } ]
+          } ],
+          "imagePullSecrets" : [ {
+            "name" : "colors-fixture"
+          } ],
+          "serviceAccountName" : "colors-redis-operator",
+          "terminationGracePeriodSeconds" : 10800,
+          "volumes" : [ {
+            "name" : "state",
+            "persistentVolumeClaim" : {
+              "claimName" : "colors-redis-operator"
+            }
+          } ]
+        }
+      }
+    }
+  } ],
+  "kind" : "List"
+}

@@ -1,6 +1,20 @@
-{:paths ["src" "test"]
- :deps {getcolors/redis-operator {:local/root "."}}
- :tasks {install {:requires ([colors.install :as install]) :task (apply install/install! *command-line-args*)}
-         controller {:requires ([colors.main :as main]) :task (apply main/-main *command-line-args*)}
-         test {:requires ([clojure.test :as t] [colors.redis-test] [colors.probe-test])
-               :task (let [r (t/run-tests 'colors.redis-test 'colors.probe-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))}}}
+{:paths ["test"]
+ :deps {io.github.getcolors/redis-operator {:local/root "."}}
+ :tasks
+ {controller {:requires ([colors.main :as main]) :task (apply main/-main *command-line-args*)}
+  test {:requires ([clojure.test :as t]
+                   [colors.redis-test] [colors.probe-test]
+                   [io.github.getcolors.redis-operator.validate-test]
+                   [io.github.getcolors.redis-operator.tools-test]
+                   [io.github.getcolors.redis-operator.workflow-test]
+                   [io.github.getcolors.redis-operator.operator-test])
+        :task (let [{:keys [fail error]}
+                    (t/run-tests 'colors.redis-test 'colors.probe-test
+                                 'io.github.getcolors.redis-operator.validate-test
+                                 'io.github.getcolors.redis-operator.tools-test
+                                 'io.github.getcolors.redis-operator.workflow-test
+                                 'io.github.getcolors.redis-operator.operator-test)]
+                (System/exit (if (pos? (+ fail error)) 1 0)))}
+  golden {:task (shell "./scripts/golden.sh")}
+  golden:accept {:task (shell "./scripts/golden.sh" "--accept")}
+  pin {:task (load-file "tasks/pin.clj")}}}

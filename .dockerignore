@@ -2,3 +2,9 @@
 .envrc*
 .colors
 .cpcache
+.github
+skills
+scripts
+tasks
+colors.yml
+devenv.*

@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-tools bash coreutils procps util-linux openjdk-21-jre-headless \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=bb /usr/local/bin/bb /usr/local/bin/bb
+# OpenTofu and kubectl are verified against their published checksums. AWS
+# publishes a PGP signature (.sig) for the CLI archive but no checksum file
+# addressable by URL, and the unversioned URL moves with every release, so
+# the image digest is what pins that part of the toolchain.
 RUN arch="${TARGETARCH:-amd64}" \
  && curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_${arch}.zip" -o /tmp/tofu.zip \
  && curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_SHA256SUMS" -o /tmp/tofu-sums \
@@ -26,7 +30,6 @@ WORKDIR /app
 COPY deps.edn bb.edn ./
 COPY src ./src
 COPY test ./test
-COPY manifests ./manifests
 # Run bb test on the build host before cross-building. Babashka native-image
 # does not execute reliably under QEMU; the controller runs on native workers.
 ENV COLORS_WORKDIR=/data/work

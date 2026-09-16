@@ -1,4 +1,4 @@
-{:paths ["src"]
+{:paths ["src" "src/resources"]
  :deps {io.github.getcolors/green {:git/url "https://github.com/getcolors/green.git" :git/sha "215e298eed1f43d85c1549ae441d03ccbf625373"}
         io.github.getcolors/redis {:git/url "https://github.com/getcolors/redis.git" :git/sha "ec260f5dd27aa92829011e24d5d8a90e75b0b098" :deps/root "green"}
-        io.github.getcolors/colors-compute {:git/url "https://github.com/getcolors/colors-compute.git" :git/sha "ae28ea74962bb1897fa6365c143c1d43ac1fe095" :deps/root "green"}}}
+        io.github.getcolors/colors-compute {:git/url "https://github.com/getcolors/colors-compute.git" :git/sha "7e1c2349388ff2ca8a3da65a0c8cb888315b57f4" :deps/root "green"}}}

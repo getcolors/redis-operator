@@ -15,6 +15,15 @@
             [io.github.getcolors.redis.workflow :as redis])
   (:import [java.security MessageDigest]))
 
+(defn log
+  "One line per reconcile outcome on the controller's stdout: the profile, the
+  callback, and what it decided. Never a secret, an opts map or raw workflow
+  output; those stay inside the pod."
+  [config & parts]
+  (locking *out*
+    (println (str "redis profile=" (:profile config) " " (str/join " " (map str parts))))
+    (flush)))
+
 (def credential-vars
   {"COLORS_PAR_DO_TOKEN" :do-token
    "COLORS_PAR_R2_ACCESS_KEY_ID" :r2-access-key-id
@@ -103,42 +112,67 @@
        (some #(and (= "public" (:type %)) (= (:ip node) (:ip_address %)))
              (get-in droplet [:networks :v4]))))
 
+(defn- observation
+  [config dependencies]
+  (let [opts (options config)
+        result ((get dependencies :inspect inspect) opts)]
+    (case (:status result)
+      ("absent" "destroyed") {:exists? false :matches? false :ready? false :reason (:status result)}
+      "partial" {:exists? true :matches? false :ready? false :reason "partial"}
+      "present"
+      (let [node (first (get-in result [:cluster :nodes]))
+            droplet ((get dependencies :provider-get provider-get) opts node)]
+        (if-not droplet
+          ;; On deletion keep exists true while shared firewall/key/state remain.
+          {:exists? (= :delete (:green/event config)) :matches? false :ready? false
+           :reason "droplet-absent" :provider-id (str (:provider_id node))}
+          (let [healthy (boolean (and (= "active" (:status droplet))
+                                    ((get dependencies :service-health service-health) opts node)))
+                marker ((get dependencies :read-marker read-marker) config)
+                matches (and (= (config-hash config) (:config-hash marker))
+                             (= (str (:provider_id node)) (:provider-id marker))
+                             (provider-matches? opts node droplet) healthy)]
+            {:exists? true :matches? (boolean matches) :ready? healthy
+             :provider-id (str (:provider_id node))
+             :reason (cond matches "converged"
+                           (not healthy) "unhealthy"
+                           (not (provider-matches? opts node droplet)) "provider-drift"
+                           (not= (str (:provider_id node)) (:provider-id marker)) "new-provider-id"
+                           :else "config-changed")})))
+      (throw (ex-info "Owned infrastructure state could not be read" {})))))
+
 (defn observe
   ([config] (observe config {}))
   ([config dependencies]
-   (let [opts (options config)
-         result ((get dependencies :inspect inspect) opts)]
-     (case (:status result)
-       ("absent" "destroyed") {:exists? false :matches? false :ready? false}
-       "partial" {:exists? true :matches? false :ready? false}
-       "present"
-       (let [node (first (get-in result [:cluster :nodes]))
-             droplet ((get dependencies :provider-get provider-get) opts node)]
-         (if-not droplet
-           ;; On deletion keep exists true while shared firewall/key/state remain.
-           {:exists? (= :delete (:green/event config)) :matches? false :ready? false}
-           (let [healthy (boolean (and (= "active" (:status droplet))
-                                     ((get dependencies :service-health service-health) opts node)))
-                 marker ((get dependencies :read-marker read-marker) config)
-                 matches (and (= (config-hash config) (:config-hash marker))
-                              (= (str (:provider_id node)) (:provider-id marker))
-                              (provider-matches? opts node droplet) healthy)]
-             {:exists? true :matches? (boolean matches) :ready? healthy})))
-       (throw (ex-info "Owned infrastructure state could not be read" {}))))))
+   (let [result (try (observation config dependencies)
+                     (catch Exception e
+                       (log config "observe outcome=error reason=" (ex-message e))
+                       (throw e)))]
+     (log config "observe" (str "exists=" (:exists? result)) (str "matches=" (:matches? result))
+          (str "ready=" (:ready? result)) (str "reason=" (:reason result))
+          (str "provider-id=" (or (:provider-id result) "none")))
+     (select-keys result [:exists? :matches? :ready?]))))
 
 (defn converge [config]
+  (log config "converge start")
   (let [result (wf/run redis/workflow (assoc (options config) :green/event :create))]
-    (when-not (wf/failed? result)
+    (if (wf/failed? result)
+      (log config "converge outcome=failed" (str "step=" (or (:green/step result) "unknown"))
+           (str "exit=" (:green/exit result)))
       (let [state (inspect (options config)) node (first (get-in state [:cluster :nodes]))]
         (when-not (and (= "present" (:status state)) (:provider_id node))
+          (log config "converge outcome=error reason=owned-state-unreadable")
           (throw (ex-info "Convergence finished without readable owned state" {})))
-        (write-marker! config node)))
+        (write-marker! config node)
+        (log config "converge outcome=converged" (str "provider-id=" (:provider_id node)))))
     ;; Do not return workflow opts, credentials or captured program output.
     {:green/exit (if (wf/failed? result) 1 0)}))
 
 (defn delete [config]
   (when-not (= "Destroy" (get-in config [:green.kubernetes/resource :spec :deletionPolicy]))
+    (log config "delete outcome=refused reason=deletion-policy-not-destroy")
     (throw (ex-info "Destroy must be explicitly selected" {})))
+  (log config "delete start")
   (let [opts (assoc (options config) :green/event :delete :compute-prevent-destroy false)
         state (inspect opts)
         missing? (and (= "present" (:status state))
@@ -153,6 +187,9 @@
                                                     :compute [tools/infrastructure-step]))})
                          (assoc opts :colors-compute/cluster (:cluster state)))
                  (wf/run redis/workflow opts))]
+    (log config "delete" (str "outcome=" (if (wf/failed? result) "failed" "destroyed"))
+         (str "mode=" (if missing? "droplet-missing" "full"))
+         (when (wf/failed? result) (str "step=" (or (:green/step result) "unknown"))))
     {:green/exit (if (wf/failed? result) 1 0)}))
 
 (defn package []
