@@ -288,6 +288,22 @@
               "mountPath" : "/root/.ssh",
               "name" : "state",
               "subPath" : "ssh"
+            }, {
+              "mountPath" : "/root/.gitlibs",
+              "name" : "state",
+              "subPath" : "gitlibs"
+            }, {
+              "mountPath" : "/root/.m2",
+              "name" : "state",
+              "subPath" : "m2"
+            }, {
+              "mountPath" : "/root/.deps.clj",
+              "name" : "state",
+              "subPath" : "deps-clj"
+            }, {
+              "mountPath" : "/app/.cpcache",
+              "name" : "state",
+              "subPath" : "cpcache"
             } ]
           } ],
           "imagePullSecrets" : [ {

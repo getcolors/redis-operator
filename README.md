@@ -129,7 +129,7 @@ tolerate `Failed` passes, since the controller retries with backoff.
 | `check` | Polls the resource (every 5 s, up to 180 s) through transient `Reconciling` passes until Ready at the current generation, runs the health probe in the controller pod, and prints `failures retained: N` from the controller's failure directory. | Exit 1 on `Failed`, `Invalid`, `Blocked`, suspension, deletion, or a generation that is never observed before the deadline. |
 | `rehearse` | Patches `spec.suspend=true` (resourceVersion-tested), waits for the acknowledged `Suspended` phase, runs the package's backup rehearsal through the probe, resumes, waits for Ready. Evidence: `.colors/<profile>/evidence/backup-rehearsal.json`. | Leaves the resource suspended and exits non-zero whenever the remote outcome is uncertain, the resource changed, or the re-read failed; prints "resource left suspended; verify no workflow runs before resuming". |
 | `drill` | Proves ownership (ID, name, profile, no DOKS worker ID, no `k8s:` tag, recorded IP), round-trips a marker, deletes exactly that Droplet, waits up to 40 min for a different provider ID, Ready at unchanged UID and generation, old Droplet 404, and a fresh authenticated write. Evidence: `self-healing.json`. | `COLORS_PAR_DRILL_DELETE_OWNED_DROPLET=true` exactly, plus `COLORS_PAR_DO_TOKEN`; exit 2 otherwise. |
-| `restart` | Scales the controller to 0, waits for the old pod to stop (never forces), scales to 1, waits for `status.lastReconcileTime` to advance past the restart, then verifies same UID, generation, provider ID, health and convergence record. Evidence: `controller-restart.json`. | Exactly one replica. |
+| `restart` | Scales the controller to 0, waits for the old pod to stop (never forces), scales to 1, waits for the new pod to log `RedisDeployment controller running`, then for a `status.lastReconcileTime` later than that pod's `status.startTime` (a write by the draining old controller is not accepted), then verifies same UID, generation, provider ID, health and convergence record. Evidence: `controller-restart.json`. | Exactly one replica; the pod UID must change. |
 | `delete` | Patches `deletionPolicy=Destroy`, deletes the resource, waits up to 30 min for the finalizer, deletes the Namespace (15 min), deletes the CRD only if no RedisDeployment remains in any namespace. The controller is never removed before the finalizer completes. | `compute-prevent-destroy` must be false (`COLORS_PAR_COMPUTE_PREVENT_DESTROY=false`); exit 2 otherwise, `--dry-run` included. Refuses a suspended resource. |
 
 ## Run and test
@@ -147,10 +147,16 @@ The controller requires `kubectl`, OpenTofu, Ansible, SSH, Redis CLI and AWS CLI
 The Dockerfile installs this toolchain. Run `bb test` on the build host before
 building; the image build does not execute Babashka under QEMU, and CI proves
 `colors.main` and `colors.probe` load from a clean checkout. The controller
-resolves its pinned source dependencies on first startup, requiring outbound
-access to GitHub and the Maven repositories. Git and Java are included for that
-resolution. Validate the resulting image on a native worker of its target
-architecture.
+resolves its pinned source dependencies on its first start, requiring outbound
+access to GitHub and the Maven repositories; Git and Java are included for that
+resolution. The caches it fills (`/root/.gitlibs`, `/root/.m2`,
+`/root/.deps.clj`, `/app/.cpcache`) are subPaths of the same PVC as `/data` and
+`/root/.ssh`, so a restart resolves nothing and an exec'd `bb` shares what the
+controller fetched. Every verb that execs into the pod first waits (up to
+10 min) for the pod's own log to carry `RedisDeployment controller running`:
+an exec that raced the controller's first download corrupted the shared
+archive for both. Validate the resulting image on a native worker of its
+target architecture.
 
 ## Image
 
@@ -181,8 +187,10 @@ provider IDs, never credentials or workflow opts.
 
 ## Execution boundary
 
-Use one controller replica with the Recreate strategy and a persistent volume
-mounted at `/data` and `/root/.ssh`. Persisting private SSH keys is essential:
+Use one controller replica with the Recreate strategy and one persistent
+volume mounted at `/data`, `/root/.ssh` and the dependency caches (5Gi is
+ample: the caches are well under 1Gi beside the compute state and OpenTofu
+providers under `/data/work`). Persisting private SSH keys is essential:
 remote infrastructure state does not contain those keys. The controller serializes
 whole workflows; compute additionally protects its own infrastructure stages
 with a remote coordination journal, and the pinned colors-compute carries the

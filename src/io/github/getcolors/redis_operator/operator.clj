@@ -6,39 +6,6 @@
   (:require [clojure.string :as str]
             [io.github.getcolors.redis-operator.tools :as tools]))
 
-(def sleep! (fn [ms] (Thread/sleep (long ms))))
-
-(defn change-logger
-  "A function that logs `line` under `label` only when it differs from the
-  last one it saw, so a long wait prints each state transition once."
-  [label]
-  (let [last (atom nil)]
-    (fn [line]
-      (when (and line (not= line @last))
-        (reset! last line)
-        (tools/log label line)))))
-
-(defn wait-for
-  "Call `f` every `interval-ms` until it returns a truthy value, which is
-  returned. A fatal exception (tools/fatal) aborts at once; any other
-  exception is retried until `timeout-ms`, after which the last error is
-  reported with the label."
-  [{:keys [label timeout-ms interval-ms] :or {interval-ms 15000}} f]
-  (let [deadline (+ (System/nanoTime) (* (long timeout-ms) 1000000))]
-    (loop [last-error nil]
-      (let [outcome (try (or (f) ::pending)
-                         (catch Exception e
-                           (if (tools/fatal? e) (throw e) e)))]
-        (cond
-          (and (not= ::pending outcome) (not (instance? Throwable outcome))) outcome
-          (<= (- deadline (System/nanoTime)) 0)
-          (throw (ex-info (str "timed out waiting for " label
-                               (when-let [e (if (instance? Throwable outcome) outcome last-error)]
-                                 (str "; last error: " (ex-message e))))
-                          {:timeout? true}))
-          :else (do (sleep! (min interval-ms (max 0 (quot (- deadline (System/nanoTime)) 1000000))))
-                    (recur (if (instance? Throwable outcome) outcome last-error))))))))
-
 (defn require-active!
   "A resource under management: present, not suspended, not being deleted."
   [opts cr]
@@ -63,8 +30,8 @@
   the controller retries a failed convergence with backoff."
   [opts {:keys [timeout-ms interval-ms transient-failure?]
          :or {timeout-ms 180000 interval-ms 5000}}]
-  (let [note (change-logger "waiting")]
-    (wait-for
+  (let [note (tools/change-logger "waiting")]
+    (tools/wait-for
      {:label "Ready at the current generation" :timeout-ms timeout-ms :interval-ms interval-ms}
      (fn []
        (let [cr (require-active! opts (tools/get-resource opts))
@@ -140,13 +107,13 @@
         _ (swap! evidence assoc :suspendedGeneration (get-in suspended [:metadata :generation]))
         _ (write! @evidence)
         _ (tools/log "rehearse" "suspend requested at generation" (:suspendedGeneration @evidence))
-        note (change-logger "rehearse")
+        note (tools/change-logger "rehearse")
         failure (atom nil)
         uncertain (atom false)]
     ;; Phase one: the rehearsal itself. Errors are recorded, not thrown, so
     ;; the resume decision below sees them.
     (try
-      (wait-for
+      (tools/wait-for
        {:label "acknowledged suspension" :timeout-ms 7800000 :interval-ms 3000}
        (fn []
          (let [current (tools/get-resource opts)]
@@ -245,10 +212,10 @@
         (tools/digitalocean token :delete (str "droplets/" (:providerId before)))
         (swap! evidence assoc :deleteAcceptedAt (tools/now))
         (write! @evidence)
-        (let [note (change-logger "drill")
+        (let [note (tools/change-logger "drill")
               result
               (try
-                (wait-for
+                (tools/wait-for
                  {:label "service recovery" :timeout-ms drill-timeout-ms :interval-ms 15000}
                  (fn []
                    (let [current (tools/get-resource opts)]
@@ -305,17 +272,19 @@
     (when-not (= 1 replicas)
       (throw (tools/fatal "Restart test requires exactly one controller replica")))
     (let [baseline (get-in cr [:status :lastReconcileTime])
+          old-pod (tools/controller-pod opts)
           evidence (atom {:startedAt (tools/now) :before before
                           :resourceUID (get-in cr [:metadata :uid])
                           :generation (get-in cr [:metadata :generation])
-                          :lastReconcileTimeBefore baseline :passed false})]
+                          :lastReconcileTimeBefore baseline
+                          :oldPod (:name old-pod) :passed false})]
       (write! @evidence)
       (tools/kubectl opts ["scale" deployment "-n" namespace "--replicas=0"])
       (tools/log "restart" "scaled to zero; waiting for the old controller to stop")
       ;; Never force deletion or start another controller while the old
       ;; process may still be running a workflow.
       (try
-        (wait-for
+        (tools/wait-for
          {:label "old controller pod to stop" :timeout-ms 7800000 :interval-ms 5000}
          (fn []
            (let [pods (:items (tools/kubectl opts ["get" "pods" "-n" namespace "-l" (str "app=" tools/controller-name) "-o" "json"]
@@ -332,15 +301,26 @@
                      {:request-timeout? false :timeout-ms 630000})
       (swap! evidence assoc :rolledOutAt (tools/now))
       (write! @evidence)
-      (let [note (change-logger "restart")
-            current (wait-for
-                     {:label "a reconcile after the restart" :timeout-ms 1800000 :interval-ms 10000}
+      ;; The old controller can still publish a status while it drains, so a
+      ;; reconcile time merely later than the pre-restart one proves nothing.
+      ;; Only a write after the NEW pod started is the new controller's, and
+      ;; nothing is exec'd until that pod reports itself up.
+      (let [new-pod (tools/controller-up! opts)
+            _ (when (and old-pod (= (:uid old-pod) (:uid new-pod)))
+                (throw (tools/fatal "The controller pod did not change across the restart")))
+            _ (when (str/blank? (:start-time new-pod))
+                (throw (tools/fatal "The new controller pod reports no start time")))
+            _ (swap! evidence assoc :newPod (:name new-pod) :newPodStartTime (:start-time new-pod))
+            _ (write! @evidence)
+            note (tools/change-logger "restart")
+            current (tools/wait-for
+                     {:label "a reconcile by the new controller" :timeout-ms 1800000 :interval-ms 10000}
                      (fn []
                        (let [current (require-active! opts (tools/get-resource opts))
                              reconciled (get-in current [:status :lastReconcileTime])]
                          (note (str (tools/phase-line current) " lastReconcileTime=" reconciled))
                          (when (and (tools/ready? current)
-                                    (or (nil? baseline) (tools/instant-after? reconciled baseline)))
+                                    (tools/instant-after? reconciled (:start-time new-pod)))
                            current))))
             after (tools/probe opts "health")]
         (when-not (and (true? (:healthy after)) (= (:providerId before) (:providerId after)))

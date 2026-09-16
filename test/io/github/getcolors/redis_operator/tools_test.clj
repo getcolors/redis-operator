@@ -28,7 +28,12 @@
         (is (nil? (:runAsNonRoot (:securityContext (pod-spec m)))))
         (is (= (:image opts) (:image container)))
         (is (= [{:secretRef {:name "redis-credentials"}}] (:envFrom container)))
-        (is (some #(= "/root/.ssh" (:mountPath %)) (:volumeMounts container)))))
+        (is (some #(= "/root/.ssh" (:mountPath %)) (:volumeMounts container)))
+        (testing "dependency caches live on the PVC so a restart resolves nothing"
+          (is (= {"/data" nil "/root/.ssh" "ssh" "/root/.gitlibs" "gitlibs" "/root/.m2" "m2"
+                  "/root/.deps.clj" "deps-clj" "/app/.cpcache" "cpcache"}
+                 (into {} (map (juxt :mountPath :subPath) (:volumeMounts container)))))
+          (is (every? #(= "state" (:name %)) (:volumeMounts container))))))
     (testing "pull secret only when named"
       (is (not (contains? (pod-spec m) :imagePullSecrets)))
       (is (= [{:name "colors-pull"}]
@@ -149,3 +154,47 @@
       (is (= {:count 0 :newest nil} (tools/failures opts))))
     (with-redefs [tools/run-command (fn [_ _] {:exit 1 :out "" :err "Unauthorized"})]
       (is (str/includes? (:error (tools/failures opts)) "Unauthorized")))))
+
+(defn pod-json [name uid phase start & [deleting?]]
+  (cond-> {:metadata {:name name :uid uid} :status {:phase phase :startTime start}}
+    deleting? (assoc-in [:metadata :deletionTimestamp] "now")))
+
+(deftest probe-waits-for-the-new-controller-to-report-up
+  (with-redefs [tools/sleep! (fn [_] nil)]
+    (let [calls (atom []) logs-served (atom 0)
+          run (fn [args _]
+                (swap! calls conj args)
+                (cond
+                  (some #{"pods"} args) {:exit 0 :err "" :out (json/generate-string {:items [(pod-json "op-new" "u2" "Running" "2026-09-16T07:57:05Z")]})}
+                  (some #{"logs"} args) {:exit 0 :err "" :out (if (< (swap! logs-served inc) 3)
+                                                                "Clojure tools not yet in expected location\nDownloading clojure-tools.zip\n"
+                                                                "Downloading clojure-tools.zip\nRedisDeployment controller running\n")}
+                  (some #{"exec"} args) {:exit 0 :err "" :out "{\"healthy\":true,\"providerId\":\"1\"}"}))]
+      (with-redefs [tools/run-command run]
+        (let [result (with-out-str (is (= {:healthy true :providerId "1"} (tools/probe opts "health"))))]
+          (is (str/includes? result "still starting"))))
+      (testing "no exec happened before the ready line was served"
+        (let [first-exec (.indexOf (mapv #(boolean (some #{"exec"} %)) @calls) true)
+              third-logs (nth (keep-indexed (fn [i args] (when (some #{"logs"} args) i)) @calls) 2)]
+          (is (= 3 (count (filter #(some #{"logs"} %) @calls))))
+          (is (> first-exec third-logs))))
+      (testing "logs are read from the pod itself since its own start time"
+        (let [logs (first (filter #(some #{"logs"} %) @calls))]
+          (is (some #{"pod/op-new"} logs))
+          (is (some #{"--since-time=2026-09-16T07:57:05Z"} logs)))))
+    (testing "a terminating pod beside the new one, or a pod not yet Running, is not a controller"
+      (with-redefs [tools/kubectl (fn [_ args & _] {:items [(pod-json "old" "u1" "Running" "t0" true) (pod-json "new" "u2" "Running" "t1")]})]
+        (is (= {:name "new" :uid "u2" :start-time "t1"} (tools/controller-pod opts))))
+      (with-redefs [tools/kubectl (fn [_ args & _] {:items [(pod-json "old" "u1" "Running" "t0") (pod-json "new" "u2" "Running" "t1")]})]
+        (is (nil? (tools/controller-pod opts))))
+      (with-redefs [tools/kubectl (fn [_ args & _] {:items [(pod-json "new" "u2" "Pending" nil)]})]
+        (is (nil? (tools/controller-pod opts)))))
+    (testing "a pod that never reports up is a bounded error, and nothing is exec'd"
+      (let [execs (atom 0)]
+        (with-redefs [tools/kubectl (fn [_ args & _]
+                                      (cond (some #{"pods"} args) {:items [(pod-json "new" "u2" "Running" "t1")]}
+                                            (some #{"logs"} args) "Downloading clojure-tools.zip"
+                                            :else (swap! execs inc)))]
+          (let [e (try (with-out-str (tools/controller-up! opts {:timeout-ms 1})) nil (catch Exception e e))]
+            (is (str/includes? (ex-message e) "controller pod to report"))
+            (is (zero? @execs))))))))

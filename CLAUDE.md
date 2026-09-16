@@ -77,9 +77,19 @@ committed. `drill` deletes a live Droplet and runs only under
   round-trip, then one DELETE of exactly that ID. Recovery means a different
   provider ID, Ready at unchanged UID and generation, old Droplet 404, and a
   fresh authenticated write. JSON decode errors during the wait are retried.
-- `restart` proves a reconcile that happened after the restart:
-  `status.lastReconcileTime` must advance past the value read before scaling
-  down. A stale Ready status proves nothing.
+- `restart` proves a reconcile by the new controller: `status.lastReconcileTime`
+  must be later than the new pod's `status.startTime`, and the pod UID must
+  change. A write later than the pre-restart value is not enough — the old
+  controller publishes while it drains. A stale Ready status proves nothing.
+- Nothing execs into the pod until `tools/controller-up!` has seen
+  `RedisDeployment controller running` in that pod's log since its start
+  time (10 min bound); `tools/probe` calls it, so `check`, `rehearse`,
+  `drill` and `restart` all wait. An exec'd `bb` racing the controller's
+  first dependency download corrupts the shared archive.
+- The PVC backs `/data`, `/root/.ssh` and the caches `/root/.gitlibs`,
+  `/root/.m2`, `/root/.deps.clj`, `/app/.cpcache` as subPaths; a restart
+  re-downloads nothing. A mount change rolls the controller once on the
+  next `create`.
 - `delete` never removes the controller before the finalizer completes, and
   removes the CRD only when no RedisDeployment remains in any namespace.
 - The adapter logs one line per observe/converge/delete outcome with the

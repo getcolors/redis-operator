@@ -32,24 +32,24 @@
 (defn quiet-result [f] (let [r (atom nil)] (with-out-str (reset! r (f))) @r))
 
 (deftest wait-for-retries-until-deadline-and-aborts-on-fatal
-  (with-redefs [operator/sleep! (fn [_] nil)]
+  (with-redefs [tools/sleep! (fn [_] nil)]
     (let [calls (atom 0)]
-      (is (= :done (operator/wait-for {:label "x" :timeout-ms 10000}
+      (is (= :done (tools/wait-for {:label "x" :timeout-ms 10000}
                                       (fn [] (if (< (swap! calls inc) 3) (throw (Exception. "transient")) :done)))))
       (is (= 3 @calls)))
-    (let [e (try (operator/wait-for {:label "never" :timeout-ms 1} (fn [] (throw (Exception. "still failing")))) nil
+    (let [e (try (tools/wait-for {:label "never" :timeout-ms 1} (fn [] (throw (Exception. "still failing")))) nil
                  (catch Exception e e))]
       (is (str/includes? (ex-message e) "timed out waiting for never"))
       (is (str/includes? (ex-message e) "still failing")))
     (let [calls (atom 0)]
       (is (thrown-with-msg? Exception #"stop now"
-                            (operator/wait-for {:label "x" :timeout-ms 10000}
+                            (tools/wait-for {:label "x" :timeout-ms 10000}
                                                (fn [] (swap! calls inc) (throw (tools/fatal "stop now"))))))
       (is (= 1 @calls)))))
 
 (deftest wait-ready-never-overrides-suspension-or-deletion
   (with-tmp [tmp]
-    (with-redefs [operator/sleep! (fn [_] nil)]
+    (with-redefs [tools/sleep! (fn [_] nil)]
       (let [reads (atom [(assoc-in (ready-cr 2) [:status :phase] "Reconciling") (ready-cr 2)])]
         (with-redefs [tools/get-resource (fn [_] (let [r (first @reads)] (swap! reads rest) r))]
           (is (= (ready-cr 2) (quiet-result #(operator/wait-ready (opts tmp) {:timeout-ms 10000}))))))
@@ -75,10 +75,10 @@
       (let [r (quiet-result #(operator/check-step (opts tmp)))]
         (is (= 1 (:green/exit r)))
         (is (str/includes? (:green/err r) "healthy"))))
-    (with-redefs [operator/sleep! (fn [_] nil)
+    (with-redefs [tools/sleep! (fn [_] nil)
                   tools/get-resource (constantly (assoc-in (ready-cr 2) [:status :observedGeneration] 1))
                   tools/probe (fn [& _] (throw (ex-info "must not probe" {})))
-                  operator/wait-for (let [original operator/wait-for]
+                  tools/wait-for (let [original tools/wait-for]
                                       (fn [config f] (original (assoc config :timeout-ms 1) f)))]
       (let [r (quiet-result #(operator/check-step (opts tmp)))]
         (is (= 1 (:green/exit r)))
@@ -88,7 +88,7 @@
 
 (deftest rehearse-suspends-runs-and-resumes
   (with-tmp [tmp]
-    (with-redefs [operator/sleep! (fn [_] nil)]
+    (with-redefs [tools/sleep! (fn [_] nil)]
       (testing "the happy path"
         (let [state (atom (ready-cr 2)) patches (atom [])]
           (with-redefs [tools/get-resource (fn [_] @state)
@@ -157,7 +157,7 @@
 
 (deftest drill-deletes-exactly-the-owned-droplet-and-waits-for-recovery
   (with-tmp [tmp]
-    (with-redefs [operator/sleep! (fn [_] nil)]
+    (with-redefs [tools/sleep! (fn [_] nil)]
       (let [deleted (atom []) markers (atom {}) probes (atom 0)
             api (fn [_ method path]
                   (case [method path]
@@ -228,12 +228,21 @@
               (is (str/includes? (:green/err r) "Desired state changed"))
               (is (false? (:passed (evidence tmp "self-healing")))))))))))
 
-(deftest restart-waits-for-a-reconcile-after-the-restart
+(def old-pod {:name "op-old" :uid "u1" :start-time "2026-09-16T07:00:00Z"})
+(def new-pod {:name "op-new" :uid "u2" :start-time "2026-09-16T07:57:05Z"})
+
+(deftest restart-waits-for-a-reconcile-by-the-new-controller
   (with-tmp [tmp]
-    (with-redefs [operator/sleep! (fn [_] nil)]
-      (let [calls (atom []) reads (atom 0) pods (atom 2)
-            later (assoc-in (ready-cr 3) [:status :lastReconcileTime] "2026-09-16T10:05:00Z")]
-        (with-redefs [tools/get-resource (fn [_] (if (< (swap! reads inc) 4) (ready-cr 3) later))
+    (with-redefs [tools/sleep! (fn [_] nil)]
+      (let [calls (atom []) reads (atom 0) pods (atom 2) ups (atom 0)
+            at (fn [t] (assoc-in (ready-cr 3) [:status :lastReconcileTime] t))
+            ;; Before the restart 07:56:17; the old controller drains and writes
+            ;; 07:57:01, later than the baseline but before the new pod's
+            ;; 07:57:05 start; the new controller's first write is 07:58:30.
+            timeline ["2026-09-16T07:56:17Z" "2026-09-16T07:57:01.507Z" "2026-09-16T07:57:01.507Z" "2026-09-16T07:58:30Z"]]
+        (with-redefs [tools/get-resource (fn [_] (at (nth timeline (min (dec (swap! reads inc)) 3))))
+                      tools/controller-pod (fn [_] (if (zero? @ups) old-pod new-pod))
+                      tools/controller-up! (fn [_ & _] (swap! ups inc) new-pod)
                       tools/kubectl (fn [_ args & _]
                                       (swap! calls conj args)
                                       (case (first args)
@@ -246,25 +255,46 @@
             (is (zero? (:green/exit r)) (:green/err r))
             (is (some #(= ["scale" "deployment/colors-redis-operator" "-n" "colors-redis" "--replicas=0"] %) @calls))
             (is (some #(= ["scale" "deployment/colors-redis-operator" "-n" "colors-redis" "--replicas=1"] %) @calls))
+            (testing "the drain write was seen and not accepted"
+              (is (= 4 @reads)))
             (let [e (evidence tmp "controller-restart")]
               (is (true? (:passed e)))
-              (is (= "2026-09-16T10:00:00Z" (:lastReconcileTimeBefore e)))
-              (is (= "2026-09-16T10:05:00Z" (:lastReconcileTimeAfter e)))))))
-      (testing "a stale reconcile time never proves the restart"
+              (is (= "2026-09-16T07:56:17Z" (:lastReconcileTimeBefore e)))
+              (is (= "2026-09-16T07:58:30Z" (:lastReconcileTimeAfter e)))
+              (is (= "op-old" (:oldPod e)))
+              (is (= "op-new" (:newPod e)))
+              (is (= "2026-09-16T07:57:05Z" (:newPodStartTime e)))))))
+      (testing "only the old controller's drain write ever arrives: the deadline, not a pass"
+        (let [reads (atom 0)]
+          (with-redefs [tools/get-resource (fn [_] (assoc-in (ready-cr 3) [:status :lastReconcileTime]
+                                                             (if (= 1 (swap! reads inc)) "2026-09-16T07:56:17Z" "2026-09-16T07:57:01.507Z")))
+                        tools/controller-pod (fn [_] old-pod)
+                        tools/controller-up! (fn [_ & _] new-pod)
+                        tools/kubectl (fn [_ args & _] (case (first args)
+                                                         "get" (if (= "deployment" (second args)) {:spec {:replicas 1}} {:items []})
+                                                         nil))
+                        tools/probe (fn [& _] probe-before)
+                        tools/wait-for (let [original tools/wait-for]
+                                         (fn [config f] (original (if (= "a reconcile by the new controller" (:label config))
+                                                                    (assoc config :timeout-ms 1) config) f)))]
+            (let [r (quiet-result #(operator/restart-step (opts tmp)))]
+              (is (= 1 (:green/exit r)))
+              (is (str/includes? (:green/err r) "a reconcile by the new controller"))
+              (is (false? (:passed (evidence tmp "controller-restart"))))))))
+      (testing "the same pod after the rollout is not a restart"
         (with-redefs [tools/get-resource (constantly (ready-cr 3))
+                      tools/controller-pod (fn [_] old-pod)
+                      tools/controller-up! (fn [_ & _] old-pod)
                       tools/kubectl (fn [_ args & _] (case (first args)
                                                        "get" (if (= "deployment" (second args)) {:spec {:replicas 1}} {:items []})
                                                        nil))
-                      tools/probe (fn [& _] probe-before)
-                      operator/wait-for (let [original operator/wait-for]
-                                          (fn [config f] (original (if (= "a reconcile after the restart" (:label config))
-                                                                     (assoc config :timeout-ms 1) config) f)))]
-          (let [r (quiet-result #(operator/restart-step (opts tmp)))]
-            (is (= 1 (:green/exit r)))
-            (is (str/includes? (:green/err r) "a reconcile after the restart")))))
+                      tools/probe (fn [& _] probe-before)]
+          (is (str/includes? (:green/err (quiet-result #(operator/restart-step (opts tmp)))) "did not change"))))
       (testing "a new convergence or a different Droplet fails the test"
         (let [reads (atom 0) later (assoc-in (ready-cr 3) [:status :lastReconcileTime] "2026-09-16T10:05:00Z")]
           (with-redefs [tools/get-resource (fn [_] (if (< (swap! reads inc) 2) (ready-cr 3) later))
+                        tools/controller-pod (fn [_] old-pod)
+                        tools/controller-up! (fn [_ & _] new-pod)
                         tools/kubectl (fn [_ args & _] (case (first args)
                                                          "get" (if (= "deployment" (second args)) {:spec {:replicas 1}} {:items []})
                                                          nil))
@@ -274,13 +304,14 @@
               (is (str/includes? (:green/err r) "another convergence"))))))
       (testing "more than one replica is refused"
         (with-redefs [tools/get-resource (constantly (ready-cr 3))
+                      tools/controller-pod (fn [_] old-pod)
                       tools/kubectl (fn [_ args & _] (when (= "scale" (first args)) (throw (ex-info "must not scale" {}))) {:spec {:replicas 2}})
                       tools/probe (fn [& _] probe-before)]
           (is (str/includes? (:green/err (quiet-result #(operator/restart-step (opts tmp)))) "exactly one")))))))
 
 (deftest ready-preconditions-poll-through-transient-reconciling
   (with-tmp [tmp]
-    (with-redefs [operator/sleep! (fn [_] nil)
+    (with-redefs [tools/sleep! (fn [_] nil)
                   tools/failures (fn [_] {:count 0 :newest nil})]
       (testing "check: the first N reads are Reconciling at the current generation, then Ready"
         (let [reads (atom 0) reconciling (-> (ready-cr 1) (assoc-in [:status :phase] "Reconciling")
@@ -305,7 +336,7 @@
               (is (= 1 @reads))))))
       (testing "check: Reconciling forever is the deadline, reported as such"
         (with-redefs [tools/get-resource (constantly (assoc-in (ready-cr 1) [:status :phase] "Reconciling"))
-                      operator/wait-for (let [original operator/wait-for]
+                      tools/wait-for (let [original tools/wait-for]
                                           (fn [config f] (original (assoc config :timeout-ms 1) f)))]
           (let [r (quiet-result #(operator/check-step (opts tmp)))]
             (is (= 1 (:green/exit r)))

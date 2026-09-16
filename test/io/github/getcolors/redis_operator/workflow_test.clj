@@ -84,7 +84,7 @@
 
 (deftest pull-secret-wait-distinguishes-absence-from-errors
   (with-tmp [tmp]
-    (with-redefs [operator/sleep! (fn [_] nil)]
+    (with-redefs [tools/sleep! (fn [_] nil)]
       (testing "absent then present"
         (let [answers (atom [{:exit 1 :err "Error from server (NotFound): secrets \"colors-fixture\" not found" :out ""}
                              {:exit 0 :err "" :out "secret/colors-fixture\n"}])]
@@ -119,7 +119,7 @@
           reads (atom [{:metadata {:generation 2 :resourceVersion "7"} :spec {:deletionPolicy "Retain"} :status {:phase "Ready"}}
                        {:metadata {:generation 3 :deletionTimestamp "now"} :spec {:deletionPolicy "Destroy"} :status {:phase "Deleting"}}
                        nil])]
-      (with-redefs [operator/sleep! (fn [_] nil)
+      (with-redefs [tools/sleep! (fn [_] nil)
                     tools/get-resource (fn [_] (let [r (first @reads)] (swap! reads rest) r))
                     tools/patch-resource! (fn [_ _ patch] (swap! patches conj patch) {})
                     tools/kubectl (fn [_ args & _] (swap! calls conj args) nil)]

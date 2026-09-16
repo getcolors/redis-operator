@@ -74,7 +74,7 @@
   [opts]
   (if-let [name (:image-pull-secret opts)]
     (do
-      (operator/wait-for
+      (tools/wait-for
        {:label (str "pull Secret " (:namespace opts) "/" name) :timeout-ms 120000 :interval-ms 5000}
        (fn [] (try (tools/kubectl opts ["get" "secret" name "-n" (:namespace opts) "-o" "name"] {:not-found nil})
                    (catch Exception e (throw (tools/fatal (ex-message e)))))))
@@ -137,8 +137,8 @@
         (when-not (tools/deleting? current)
           (tools/kubectl opts ["delete" tools/resource-type (:resource-name opts) "-n" (:namespace opts)
                                "--wait=false" "--ignore-not-found"]))
-        (let [note (operator/change-logger "finalizing")]
-          (operator/wait-for
+        (let [note (tools/change-logger "finalizing")]
+          (tools/wait-for
            {:label "RedisDeployment finalizer" :timeout-ms 1800000 :interval-ms 15000}
            (fn [] (let [cr (tools/get-resource opts)]
                     (if (nil? cr) :gone (do (note (tools/phase-line cr)) nil))))))

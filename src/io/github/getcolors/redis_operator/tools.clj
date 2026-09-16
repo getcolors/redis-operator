@@ -32,6 +32,44 @@
   (try (.isAfter (Instant/parse later) (Instant/parse earlier))
        (catch Exception _ false)))
 
+;; ------------------------------------------------------------------ waiting
+
+(defn fatal [message] (ex-info message {::fatal true}))
+(defn fatal? [e] (true? (::fatal (ex-data e))))
+
+(def sleep! (fn [ms] (Thread/sleep (long ms))))
+
+(defn change-logger
+  "A function that logs `line` under `label` only when it differs from the
+  last one it saw, so a long wait prints each state transition once."
+  [label]
+  (let [last (atom nil)]
+    (fn [line]
+      (when (and line (not= line @last))
+        (reset! last line)
+        (log label line)))))
+
+(defn wait-for
+  "Call `f` every `interval-ms` until it returns a truthy value, which is
+  returned. A fatal exception (tools/fatal) aborts at once; any other
+  exception is retried until `timeout-ms`, after which the last error is
+  reported with the label."
+  [{:keys [label timeout-ms interval-ms] :or {interval-ms 15000}} f]
+  (let [deadline (+ (System/nanoTime) (* (long timeout-ms) 1000000))]
+    (loop [last-error nil]
+      (let [outcome (try (or (f) ::pending)
+                         (catch Exception e
+                           (if (fatal? e) (throw e) e)))]
+        (cond
+          (and (not= ::pending outcome) (not (instance? Throwable outcome))) outcome
+          (<= (- deadline (System/nanoTime)) 0)
+          (throw (ex-info (str "timed out waiting for " label
+                               (when-let [e (if (instance? Throwable outcome) outcome last-error)]
+                                 (str "; last error: " (ex-message e))))
+                          {:timeout? true}))
+          :else (do (sleep! (min interval-ms (max 0 (quot (- deadline (System/nanoTime)) 1000000))))
+                    (recur (if (instance? Throwable outcome) outcome last-error))))))))
+
 ;; ------------------------------------------------------------------ rendering
 
 (defn crd []
@@ -52,7 +90,12 @@
 
   The grace period exceeds the sum of the package's own caps (Ansible 7200 s,
   OpenTofu plan 1800 s) so a SIGKILL cannot land inside an infrastructure
-  stage and leave the compute journal locked."
+  stage and leave the compute journal locked.
+
+  The one 5Gi PVC backs the work directory, the SSH keys and the dependency
+  caches (git libraries, Maven, the Clojure tools, the classpath cache):
+  together well under 1Gi, beside the compute state and OpenTofu providers
+  under /data/work."
   [opts]
   (let [namespace (:namespace opts) image (:image opts)
         metadata {:name controller-name :namespace namespace}
@@ -87,7 +130,14 @@
                                                              :capabilities {:drop ["ALL"]}
                                                              :seccompProfile {:type "RuntimeDefault"}}
                                            :volumeMounts [{:name "state" :mountPath "/data"}
-                                                          {:name "state" :mountPath "/root/.ssh" :subPath "ssh"}]}]
+                                                          {:name "state" :mountPath "/root/.ssh" :subPath "ssh"}
+                                                          ;; Dependency caches outlive the pod, so a
+                                                          ;; restart resolves nothing and an exec'd
+                                                          ;; `bb` shares what the controller fetched.
+                                                          {:name "state" :mountPath "/root/.gitlibs" :subPath "gitlibs"}
+                                                          {:name "state" :mountPath "/root/.m2" :subPath "m2"}
+                                                          {:name "state" :mountPath "/root/.deps.clj" :subPath "deps-clj"}
+                                                          {:name "state" :mountPath "/app/.cpcache" :subPath "cpcache"}]}]
                              :volumes [{:name "state" :persistentVolumeClaim {:claimName controller-name}}]}
                       (:image-pull-secret opts)
                       (assoc :imagePullSecrets [{:name (:image-pull-secret opts)}]))}}}]))
@@ -189,10 +239,48 @@
                         patch))]
            {:json? true}))
 
+(def controller-ready-line "RedisDeployment controller running")
+
+(defn controller-pod
+  "The one running, non-terminating controller pod, or nil while there is
+  none or more than one."
+  [opts]
+  (let [pods (:items (kubectl opts ["get" "pods" "-n" (:namespace opts) "-l" (str "app=" controller-name) "-o" "json"]
+                              {:json? true}))
+        live (remove #(get-in % [:metadata :deletionTimestamp]) pods)]
+    (when (= 1 (count live))
+      (let [pod (first live)]
+        (when (= "Running" (get-in pod [:status :phase]))
+          {:name (get-in pod [:metadata :name]) :uid (get-in pod [:metadata :uid])
+           :start-time (get-in pod [:status :startTime])})))))
+
+(defn controller-up!
+  "Wait (bounded) until exactly one controller pod is running and its own
+  log, read since its start time, carries the line the controller prints
+  once its dependencies are resolved and the poller is up. Exec'ing into a
+  pod before that races the controller's own dependency download and
+  corrupts both. Returns the pod."
+  ([opts] (controller-up! opts {}))
+  ([opts {:keys [timeout-ms] :or {timeout-ms 600000}}]
+   (let [note (change-logger "controller")]
+     (wait-for
+      {:label (str "controller pod to report \"" controller-ready-line "\"") :timeout-ms timeout-ms :interval-ms 5000}
+      (fn []
+        (if-let [pod (controller-pod opts)]
+          (let [logs (kubectl opts (cond-> ["logs" (str "pod/" (:name pod)) "-n" (:namespace opts) "-c" "controller"]
+                                     (:start-time pod) (conj (str "--since-time=" (:start-time pod))))
+                              {:request-timeout? false :timeout-ms 60000})]
+            (if (str/includes? (str logs) controller-ready-line)
+              (do (note (str "up pod=" (:name pod) " started=" (:start-time pod))) pod)
+              (do (note (str "pod=" (:name pod) " started=" (:start-time pod) " still starting")) nil)))
+          (do (note "no single running controller pod yet") nil)))))))
+
 (defn probe
   "Run the controller image's probe inside the running pod and parse its
-  JSON. The probe prints only non-secret evidence."
+  JSON, after the pod has reported itself up. The probe prints only
+  non-secret evidence."
   [opts operation & args]
+  (controller-up! opts)
   (let [rehearse? (= "rehearse" operation)
         out (kubectl opts (into ["exec" (str "deployment/" controller-name) "-n" (:namespace opts)
                                  "--" "bb" "-m" "colors.probe" (:resource-name opts) (:namespace opts) operation]
@@ -264,9 +352,6 @@
          " observed=" (or (:observedGeneration status) "none")
          (when (suspended? cr) " suspended=true")
          (when (deleting? cr) " deleting=true"))))
-
-(defn fatal [message] (ex-info message {::fatal true}))
-(defn fatal? [e] (true? (::fatal (ex-data e))))
 
 (defn owned-droplet!
   "Fail closed before any deletion: the live Droplet must be exactly the
