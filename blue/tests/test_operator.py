@@ -315,3 +315,8 @@ async def test_provider_absence_requires_404_and_delete_allows_empty(monkeypatch
     assert await t.digitalocean("test-token", "get", "droplets/12") == {
         "droplet": {"id": 12}
     }
+
+
+@pytest.mark.parametrize("source", ["192.0.0.9/32", "192.0.0.10/32"])
+def test_special_global_addresses_follow_green_blocklist(opts, source):
+    assert w.state_errors({**opts, "digitalocean-ssh-sources": [source]})

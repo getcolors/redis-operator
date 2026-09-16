@@ -9,6 +9,28 @@ from package_redis_blue.validate import state_errors as redis_errors
 from package_redis_blue.workflow import DEFAULTS as REDIS_DEFAULTS
 from . import tools as t, operator
 
+# Keep this list identical to Green and Red. Python's is_global registry can
+# change between interpreter versions and permits special addresses we reject.
+BLOCKED_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.0.2.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+    )
+)
+
 DEFAULTS = {
     "namespace": "colors-redis",
     "reconcile-interval": "60s",
@@ -70,8 +92,10 @@ def state_errors(opts):
                     and source.endswith("/32")
                     and address.version == 4
                     and address.prefixlen == 32
-                    and address.network_address.is_global
-                    and not address.network_address.is_multicast
+                    and not any(
+                        address.network_address in network
+                        for network in BLOCKED_NETWORKS
+                    )
                 )
             except (ValueError, TypeError):
                 valid = False
