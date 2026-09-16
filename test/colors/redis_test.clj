@@ -1,6 +1,11 @@
 (ns colors.redis-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [colors.redis :as redis]))
+  (:require [babashka.fs :as fs]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [colors.redis :as redis])
+  (:import [java.nio.file Files LinkOption]
+           [java.nio.file.attribute PosixFilePermissions]
+           [java.time ZoneOffset ZonedDateTime]))
 (def config {:profile "redis-test" :r2-bucket "redis-state" :r2-endpoint "https://example.test"
              :digitalocean-region "ams3" :digitalocean-size "s-1vcpu-2gb"
              :digitalocean-image "ubuntu-24-04-x64"})
@@ -57,12 +62,17 @@
     (is (thrown? Exception (redis/provider-get {} node)))))
 
 (deftest workflow-boundaries
-  (let [seen (atom []) marked (atom false)]
-    (with-redefs [green.workflow/run (fn [_ opts] (swap! seen conj opts) {:green/exit 1 :green/err "secret" :do-token "secret"})
-                  redis/write-marker! (fn [& _] (reset! marked true))]
-      (is (= {:green/exit 1} (redis/converge config)))
-      (is (true? (:compute-prevent-destroy (first @seen))))
-      (is (false? @marked)))
+  (let [seen (atom []) marked (atom false) retained (atom nil)]
+    (with-redefs [green.workflow/run (fn [_ opts] (swap! seen conj opts) {:green/exit 1 :green/err "secret" :do-token "secret" :green/step :redis/ansible})
+                  redis/write-marker! (fn [& _] (reset! marked true))
+                  redis/retain-failure! (fn [_ result & _] (reset! retained result) "retained.log")]
+      (let [out (with-out-str (is (= {:green/exit 1} (redis/converge config))))]
+        (is (true? (:compute-prevent-destroy (first @seen))))
+        (is (false? @marked))
+        (testing "the failure is retained for diagnosis, and the log line names the file, not the error"
+          (is (= :redis/ansible (:green/step @retained)))
+          (is (str/includes? out "converge outcome=failed step=:redis/ansible exit=1 retained=retained.log"))
+          (is (not (str/includes? out "secret"))))))
     (reset! seen [])
     (with-redefs [redis/inspect (constantly {:status "absent"})
                   green.workflow/run (fn [_ opts] (swap! seen conj opts) {:green/exit 0})]
@@ -71,3 +81,41 @@
       (is (= {:green/exit 0} (redis/delete (assoc config :green.kubernetes/resource {:spec {:deletionPolicy "Destroy"}}))))
       (is (false? (:compute-prevent-destroy (first @seen))))
       (is (= :delete (:green/event (first @seen)))))))
+
+(deftest secrets-are-masked-in-failure-reports
+  (let [env {"COLORS_PAR_DO_TOKEN" "dop_v1_abc" "COLORS_PAR_R2_SECRET_ACCESS_KEY" "abc" "PATH" "/usr/bin" "COLORS_PAR_EMPTY" ""}]
+    (is (= "token *** key *** path /usr/bin ***" (redis/mask "token dop_v1_abc key abc path /usr/bin dop_v1_abc" env)))
+    (testing "the longer value is masked whole even though it contains the shorter one"
+      (is (= "***" (redis/mask "dop_v1_abc" env))))
+    (is (= "nothing" (redis/mask "nothing" {})))
+    (let [report (redis/failure-report {:profile "p" :green/event :create}
+                                       {:green/step :redis/ansible :green/exit 2
+                                        :green/err "ansible-playbook main.yml failed: Bearer dop_v1_abc rejected"
+                                        :ansible/recap {:host {:failed 1}}
+                                        :green/trace "at line 1 dop_v1_abc"}
+                                       env)]
+      (is (not (str/includes? report "dop_v1_abc")))
+      (doseq [line ["profile: p" "event: create" "step: :redis/ansible" "exit: 2" "err:" "Bearer *** rejected" "recap:" ":failed 1" "trace:"]]
+        (is (str/includes? report line) line)))))
+
+(deftest failure-logs-are-private-and-rotated
+  (let [dir (fs/create-temp-dir)]
+    (try
+      (with-redefs [redis/options (fn [config] {:workdir (str dir) :profile (:profile config)})]
+        (let [config {:profile "redis-test" :green/event :create}
+              at (fn [i] (.plusSeconds (ZonedDateTime/of 2026 9 16 10 0 0 0 ZoneOffset/UTC) i))
+              names (doall (for [i (range 23)]
+                             (redis/retain-failure! config {:green/step :redis/ansible :green/exit 2 :green/err (str "failure " i " dop_v1_abc")}
+                                                    {"COLORS_PAR_DO_TOKEN" "dop_v1_abc"} (at i))))
+              failures (fs/file dir "redis-test" "failures")
+              kept (sort (map fs/file-name (fs/list-dir failures)))]
+          (is (= "20260916T100000Z-redis-ansible.log" (first names)))
+          (is (= 20 (count kept)))
+          (is (= (drop 3 names) kept))
+          (is (= "rwx------" (PosixFilePermissions/toString (Files/getPosixFilePermissions (.toPath failures) (make-array LinkOption 0)))))
+          (let [newest (fs/file failures (last kept)) content (slurp newest)]
+            (is (= "rw-------" (PosixFilePermissions/toString (Files/getPosixFilePermissions (.toPath newest) (make-array LinkOption 0)))))
+            (is (str/includes? content "failure 22 ***"))
+            (is (not (str/includes? content "dop_v1_abc"))))
+          (is (not-any? #(str/ends-with? % ".tmp") kept))))
+      (finally (fs/delete-tree dir)))))

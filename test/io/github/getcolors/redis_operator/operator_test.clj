@@ -75,11 +75,14 @@
       (let [r (quiet-result #(operator/check-step (opts tmp)))]
         (is (= 1 (:green/exit r)))
         (is (str/includes? (:green/err r) "healthy"))))
-    (with-redefs [tools/get-resource (constantly (assoc-in (ready-cr 2) [:status :observedGeneration] 1))
-                  tools/probe (fn [& _] (throw (ex-info "must not probe" {})))]
+    (with-redefs [operator/sleep! (fn [_] nil)
+                  tools/get-resource (constantly (assoc-in (ready-cr 2) [:status :observedGeneration] 1))
+                  tools/probe (fn [& _] (throw (ex-info "must not probe" {})))
+                  operator/wait-for (let [original operator/wait-for]
+                                      (fn [config f] (original (assoc config :timeout-ms 1) f)))]
       (let [r (quiet-result #(operator/check-step (opts tmp)))]
         (is (= 1 (:green/exit r)))
-        (is (str/includes? (:green/err r) "not Ready"))))
+        (is (str/includes? (:green/err r) "timed out waiting for Ready at the current generation"))))
     (with-redefs [tools/get-resource (constantly (suspended-cr 2))]
       (is (str/includes? (:green/err (quiet-result #(operator/check-step (opts tmp)))) "suspended")))))
 
@@ -274,3 +277,54 @@
                       tools/kubectl (fn [_ args & _] (when (= "scale" (first args)) (throw (ex-info "must not scale" {}))) {:spec {:replicas 2}})
                       tools/probe (fn [& _] probe-before)]
           (is (str/includes? (:green/err (quiet-result #(operator/restart-step (opts tmp)))) "exactly one")))))))
+
+(deftest ready-preconditions-poll-through-transient-reconciling
+  (with-tmp [tmp]
+    (with-redefs [operator/sleep! (fn [_] nil)
+                  tools/failures (fn [_] {:count 0 :newest nil})]
+      (testing "check: the first N reads are Reconciling at the current generation, then Ready"
+        (let [reads (atom 0) reconciling (-> (ready-cr 1) (assoc-in [:status :phase] "Reconciling")
+                                             (assoc-in [:status :conditions 0] {:type "Ready" :status "False" :reason "Reconciling"}))]
+          (with-redefs [tools/get-resource (fn [_] (if (<= (swap! reads inc) 4) reconciling (ready-cr 1)))
+                        tools/probe (fn [& _] probe-before)]
+            (let [out (atom nil) r (quiet-result #(let [r (operator/check-step (opts tmp))] r))]
+              (is (zero? (:green/exit r)) (:green/err r))
+              (is (= 5 @reads))))))
+      (testing "check: an unobserved generation is transient too"
+        (let [reads (atom 0)]
+          (with-redefs [tools/get-resource (fn [_] (if (< (swap! reads inc) 3) (assoc-in (ready-cr 2) [:status :observedGeneration] 1) (ready-cr 2)))
+                        tools/probe (fn [& _] probe-before)]
+            (is (zero? (:green/exit (quiet-result #(operator/check-step (opts tmp)))))))))
+      (testing "check: Failed is an error, not a wait"
+        (let [reads (atom 0)]
+          (with-redefs [tools/get-resource (fn [_] (swap! reads inc) (assoc-in (ready-cr 1) [:status :phase] "Failed"))
+                        tools/probe (fn [& _] (throw (ex-info "must not probe" {})))]
+            (let [r (quiet-result #(operator/check-step (opts tmp)))]
+              (is (= 1 (:green/exit r)))
+              (is (str/includes? (:green/err r) "phase=Failed"))
+              (is (= 1 @reads))))))
+      (testing "check: Reconciling forever is the deadline, reported as such"
+        (with-redefs [tools/get-resource (constantly (assoc-in (ready-cr 1) [:status :phase] "Reconciling"))
+                      operator/wait-for (let [original operator/wait-for]
+                                          (fn [config f] (original (assoc config :timeout-ms 1) f)))]
+          (let [r (quiet-result #(operator/check-step (opts tmp)))]
+            (is (= 1 (:green/exit r)))
+            (is (str/includes? (:green/err r) "timed out waiting for Ready")))))
+      (testing "the create wait tolerates a Failed pass, since the controller retries"
+        (let [reads (atom 0)]
+          (with-redefs [tools/get-resource (fn [_] (if (< (swap! reads inc) 3) (assoc-in (ready-cr 1) [:status :phase] "Failed") (ready-cr 1)))]
+            (is (= (ready-cr 1) (quiet-result #(operator/wait-ready (opts tmp) {:timeout-ms 10000 :transient-failure? true}))))))))))
+
+(deftest check-reports-retained-failures
+  (with-tmp [tmp]
+    (with-redefs [tools/get-resource (constantly (ready-cr 1))
+                  tools/probe (fn [& _] probe-before)]
+      (with-redefs [tools/failures (fn [_] {:count 2 :newest "20260916T101500Z-redis-ansible.log"})]
+        (let [out (with-out-str (operator/check-step (opts tmp)))]
+          (is (str/includes? out "failures retained: 2"))
+          (is (str/includes? out "newest=20260916T101500Z-redis-ansible.log"))))
+      (with-redefs [tools/failures (fn [_] {:count 0 :newest nil})]
+        (is (str/includes? (with-out-str (operator/check-step (opts tmp))) "failures retained: 0")))
+      (with-redefs [tools/failures (fn [_] {:error "kubectl exec failed"})]
+        (let [out (atom nil) r (quiet-result #(let [r (operator/check-step (opts tmp))] (reset! out r) r))]
+          (is (zero? (:green/exit r))))))))

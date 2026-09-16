@@ -94,13 +94,39 @@ controller's stdout (`kubectl logs`): the profile, the decision and its reason,
 and the provider ID. It never prints secrets, the opts map or raw workflow
 output.
 
+## Failure logs
+
+A failed converge or delete keeps its diagnostics on the controller volume, at
+`/data/work/<profile>/failures/<UTC timestamp>-<step>.log` (mode 0600 in a
+0700 directory, the 20 newest kept): the failing step and exit code, the
+workflow's error text with the play's or OpenTofu's output, the Ansible recap
+and the trace when present. The exact value of every `COLORS_PAR_*` variable
+in the controller's environment is replaced by `***` before the file exists.
+Nothing from these files reaches stdout, the resource status or events; the
+adapter's log line names the file only. `./green check` prints how many are
+retained and the newest name. Read one with:
+
+```bash
+kubectl --context <kube-context> exec -n colors-redis deployment/colors-redis-operator -- \
+  ls -1 /data/work/<profile>/failures
+kubectl --context <kube-context> exec -n colors-redis deployment/colors-redis-operator -- \
+  cat /data/work/<profile>/failures/<file>
+```
+
+Ready is polled, not read once: with a short `reconcile-interval` the
+controller publishes `Reconciling` for most of each interval while it observes
+(DigitalOcean API, R2 state, SSH PING) and `Ready` only between passes. `check`
+and the preconditions of `rehearse`, `drill` and `restart` wait up to 180 s for
+a Ready pass at the current generation; `create` and the recovery wait also
+tolerate `Failed` passes, since the controller retries with backoff.
+
 ## Verbs
 
 | Verb | Side effects | Guard |
 |---|---|---|
 | `build` | Writes `.colors/<profile>/operator/manifests.json` and `redis-deployment.json`. No cluster contact, no credentials. | — |
 | `create` | Applies the Namespace, the `redis-credentials` Secret (stdin), waits for the pull Secret if named, applies the manifests, waits for the CRD to be Established and the controller to roll out, applies the resource, waits up to 45 min for `Ready` at the current generation. `--dry-run` skips every side effect. | Five credentials present; refuses (exit 1) a suspended or deleting resource. |
-| `check` | Reads the resource and runs the health probe in the controller pod. | Exit 1 unless Ready at the current generation, unsuspended, not deleting, and PING answers. |
+| `check` | Polls the resource (every 5 s, up to 180 s) through transient `Reconciling` passes until Ready at the current generation, runs the health probe in the controller pod, and prints `failures retained: N` from the controller's failure directory. | Exit 1 on `Failed`, `Invalid`, `Blocked`, suspension, deletion, or a generation that is never observed before the deadline. |
 | `rehearse` | Patches `spec.suspend=true` (resourceVersion-tested), waits for the acknowledged `Suspended` phase, runs the package's backup rehearsal through the probe, resumes, waits for Ready. Evidence: `.colors/<profile>/evidence/backup-rehearsal.json`. | Leaves the resource suspended and exits non-zero whenever the remote outcome is uncertain, the resource changed, or the re-read failed; prints "resource left suspended; verify no workflow runs before resuming". |
 | `drill` | Proves ownership (ID, name, profile, no DOKS worker ID, no `k8s:` tag, recorded IP), round-trips a marker, deletes exactly that Droplet, waits up to 40 min for a different provider ID, Ready at unchanged UID and generation, old Droplet 404, and a fresh authenticated write. Evidence: `self-healing.json`. | `COLORS_PAR_DRILL_DELETE_OWNED_DROPLET=true` exactly, plus `COLORS_PAR_DO_TOKEN`; exit 2 otherwise. |
 | `restart` | Scales the controller to 0, waits for the old pod to stop (never forces), scales to 1, waits for `status.lastReconcileTime` to advance past the restart, then verifies same UID, generation, provider ID, health and convergence record. Evidence: `controller-restart.json`. | Exactly one replica. |

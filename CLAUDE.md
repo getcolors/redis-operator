@@ -83,7 +83,18 @@ committed. `drill` deletes a live Droplet and runs only under
 - `delete` never removes the controller before the finalizer completes, and
   removes the CRD only when no RedisDeployment remains in any namespace.
 - The adapter logs one line per observe/converge/delete outcome with the
-  reason and provider ID; never secrets or raw workflow output.
+  reason and provider ID; never secrets or raw workflow output. A failed
+  converge or delete is retained as
+  `/data/work/<profile>/failures/<UTC timestamp>-<step>.log` (0600 in 0700,
+  20 newest kept) with every `COLORS_PAR_*` value masked to `***`; the log
+  line names the file. `check` prints `failures retained: N`; read one with
+  `kubectl exec -n <namespace> deployment/colors-redis-operator -- cat
+  /data/work/<profile>/failures/<file>`.
+- Ready is polled through transient `Reconciling` passes (5 s, 180 s) by
+  `check` and by every precondition; `Failed`, `Invalid`, `Blocked`,
+  suspension and deletion are errors, except that the create and recovery
+  waits tolerate `Failed` because the controller retries. A single read of
+  the phase proves nothing with a short reconcile interval.
 
 ## Package and deployment coupling
 

@@ -51,18 +51,27 @@
   cr)
 
 (defn wait-ready
-  "Wait through routine reconciliation for Ready at the current generation,
-  printing each phase transition. Suspension, deletion and an Invalid or
-  Blocked phase end the wait: none of them heals by waiting."
-  [opts {:keys [timeout-ms] :or {timeout-ms 600000}}]
+  "Wait for Ready at the current generation, printing each phase transition.
+
+  `Reconciling` is transient: with a short reconcile interval the controller
+  spends most of each interval observing (DigitalOcean API, R2 state, SSH
+  PING) and publishes Ready only between passes, so a single read proves
+  nothing. A generation the controller has not observed yet is transient the
+  same way. Suspension, deletion, Invalid and Blocked end the wait at once:
+  none of them heals by waiting. `Failed` ends it too unless
+  `transient-failure?` is set, which the create and recovery waits do because
+  the controller retries a failed convergence with backoff."
+  [opts {:keys [timeout-ms interval-ms transient-failure?]
+         :or {timeout-ms 180000 interval-ms 5000}}]
   (let [note (change-logger "waiting")]
     (wait-for
-     {:label "Ready at the current generation" :timeout-ms timeout-ms}
+     {:label "Ready at the current generation" :timeout-ms timeout-ms :interval-ms interval-ms}
      (fn []
        (let [cr (require-active! opts (tools/get-resource opts))
              phase (get-in cr [:status :phase])]
          (note (tools/phase-line cr))
-         (when (contains? #{"Invalid" "Blocked"} phase)
+         (when (or (contains? #{"Invalid" "Blocked"} phase)
+                   (and (= "Failed" phase) (not transient-failure?)))
            (throw (tools/fatal (str "RedisDeployment reports " (tools/phase-line cr)))))
          (when (tools/ready? cr) cr))))))
 
@@ -87,16 +96,22 @@
 
 ;; ----------------------------------------------------------------- check
 
-(defn check-step [opts]
+(defn check-step
+  "Ready at the current generation (polled through transient Reconciling
+  passes), a healthy authenticated PING, and the number of failure logs the
+  controller has retained under its work directory."
+  [opts]
   (outcome opts
            (fn []
-             (let [cr (require-active! opts (tools/get-resource opts))]
-               (when-not (tools/ready? cr)
-                 (throw (tools/fatal (str "RedisDeployment is not Ready at its current generation: "
-                                          (tools/phase-line cr)))))
-               (let [probe (healthy-probe! opts)]
-                 (tools/log "check" (tools/phase-line cr))
-                 (tools/log "check" (summary probe)))))))
+             (let [cr (wait-ready opts {})
+                   probe (healthy-probe! opts)]
+               (tools/log "check" (tools/phase-line cr))
+               (tools/log "check" (summary probe))
+               (let [{:keys [count newest error]} (tools/failures opts)]
+                 (if error
+                   (tools/log "check" "failures retained: unknown" (str "(" error ")"))
+                   (tools/log "check" (str "failures retained: " count)
+                              (when newest (str "newest=" newest)))))))))
 
 ;; ----------------------------------------------------------------- rehearse
 

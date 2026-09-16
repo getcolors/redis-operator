@@ -109,8 +109,8 @@
     (assoc opts :green/exit 0)))
 
 (defn ready-step [opts]
-  (let [cr (operator/wait-ready opts {:timeout-ms 2700000})]
-    (tools/log "ready" (tools/phase-line cr) (str "provider-id=" (get-in cr [:status :providerId] "unpublished")))
+  (let [cr (operator/wait-ready opts {:timeout-ms 2700000 :interval-ms 15000 :transient-failure? true})]
+    (tools/log "ready" (tools/phase-line cr))
     (assoc opts :green/exit 0)))
 
 ;; ---------------------------------------------------------------- delete

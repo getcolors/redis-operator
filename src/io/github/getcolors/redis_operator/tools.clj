@@ -200,6 +200,21 @@
                      {:request-timeout? false :timeout-ms (if rehearse? 7800000 180000)})]
     (json/parse-string out true)))
 
+(defn failures-dir [opts] (str "/data/work/" (:profile opts) "/failures"))
+
+(defn failures
+  "The failure logs the controller retained for this profile, listed inside
+  the pod. Never their content: read one with
+  `kubectl exec deployment/colors-redis-operator -- cat <path>`."
+  [opts]
+  (try
+    (let [out (kubectl opts ["exec" (str "deployment/" controller-name) "-n" (:namespace opts)
+                             "--" "sh" "-c" (str "ls -1 " (failures-dir opts) " 2>/dev/null || true")]
+                       {:request-timeout? false :timeout-ms 60000})
+          files (->> (str/split-lines (str out)) (map str/trim) (remove str/blank?) sort vec)]
+      {:count (count files) :newest (last files)})
+    (catch Exception e {:error (ex-message e)})))
+
 (defn digitalocean
   "One DigitalOcean API call. A GET 404 is nil; every other error is reported
   by status only."

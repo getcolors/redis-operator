@@ -137,3 +137,15 @@
       (let [e (try (tools/owned-droplet! changed probe' "redis-dev" workers) nil (catch Exception e e))]
         (is (some? e) label)
         (is (tools/fatal? e) label)))))
+
+(deftest failures-are-listed-inside-the-pod-never-read
+  (let [seen (atom nil)]
+    (with-redefs [tools/run-command (fn [args _] (reset! seen args) {:exit 0 :out "20260916T100000Z-redis-ansible.log\n20260916T110000Z-redis-ansible.log\n" :err ""})]
+      (is (= {:count 2 :newest "20260916T110000Z-redis-ansible.log"} (tools/failures opts)))
+      (is (= "exec" (nth @seen 3)))
+      (is (str/includes? (last @seen) "/data/work/redis-dev/failures"))
+      (is (not-any? #(= "cat" %) @seen)))
+    (with-redefs [tools/run-command (fn [_ _] {:exit 0 :out "" :err ""})]
+      (is (= {:count 0 :newest nil} (tools/failures opts))))
+    (with-redefs [tools/run-command (fn [_ _] {:exit 1 :out "" :err "Unauthorized"})]
+      (is (str/includes? (:error (tools/failures opts)) "Unauthorized")))))

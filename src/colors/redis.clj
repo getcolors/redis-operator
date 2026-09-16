@@ -13,7 +13,11 @@
             [io.github.getcolors.redis.tools :as tools]
             [io.github.getcolors.redis.validate :as validation]
             [io.github.getcolors.redis.workflow :as redis])
-  (:import [java.security MessageDigest]))
+  (:import [java.nio.file Files LinkOption Path StandardCopyOption]
+           [java.nio.file.attribute FileAttribute PosixFilePermissions]
+           [java.security MessageDigest]
+           [java.time ZoneOffset ZonedDateTime]
+           [java.time.format DateTimeFormatter]))
 
 (defn log
   "One line per reconcile outcome on the controller's stdout: the profile, the
@@ -75,6 +79,71 @@
     (io/make-parents path)
     (spit tmp (pr-str {:config-hash (config-hash config) :provider-id (str (:provider_id node))}))
     (when-not (.renameTo tmp path) (throw (ex-info "Could not persist convergence result" {})))))
+
+(def failure-limit 20)
+
+(defn mask
+  "Replace the exact value of every COLORS_PAR_* variable in `env` with ***,
+  longest values first so a value that contains another is masked whole."
+  [text env]
+  (reduce (fn [text value] (str/replace text value "***"))
+          (str text)
+          (->> env
+               (filter (fn [[k v]] (and (str/starts-with? (str k) "COLORS_PAR_") (not (str/blank? v)))))
+               (map second)
+               distinct
+               (sort-by count >))))
+
+(defn failures-dir [config]
+  (io/file (:workdir (options config)) (:profile config) "failures"))
+
+(def ^:private timestamp-format (DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'"))
+
+(defn failure-report
+  "The retained diagnostics of one failed workflow run: the step, the exit,
+  the engine error (which carries the play's or tofu's output), the play
+  recap and the trace when present. Every secret the process knows is
+  masked before the text exists."
+  [config result env]
+  (let [section (fn [label value] (when value (str label ":\n" (mask (str value) env) "\n")))]
+    (str "profile: " (:profile config) "\n"
+         "event: " (name (:green/event config :create)) "\n"
+         "step: " (:green/step result "unknown") "\n"
+         "exit: " (:green/exit result) "\n"
+         (section "err" (:green/err result))
+         (section "recap" (some-> (:ansible/recap result) pr-str))
+         (section "trace" (:green/trace result)))))
+
+(defn- posix [perms] (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString perms)))
+
+(defn retain-failure!
+  "Write the report as <UTC timestamp>-<step>.log, 0600 in a 0700 directory,
+  atomically, and keep only the newest `failure-limit` files. Returns the
+  file name. Nothing here reaches stdout, status or events."
+  ([config result] (retain-failure! config result (into {} (System/getenv)) (ZonedDateTime/now ZoneOffset/UTC)))
+  ([config result env now]
+   (let [dir (failures-dir config)
+         step (str/replace (str/replace (str (:green/step result "unknown")) #"^:" "") #"[^A-Za-z0-9._-]" "-")
+         name (str (.format now timestamp-format) "-" step ".log")
+         path (.toPath (io/file dir name))
+         tmp (.toPath (io/file dir (str name ".tmp")))]
+     (io/make-parents (io/file dir name))
+     (Files/setPosixFilePermissions (.toPath dir) (PosixFilePermissions/fromString "rwx------"))
+     (Files/deleteIfExists tmp)
+     (Files/createFile tmp (into-array FileAttribute [(posix "rw-------")]))
+     (Files/write tmp (.getBytes (failure-report config result env) "UTF-8") (make-array java.nio.file.OpenOption 0))
+     (Files/move tmp path (into-array [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING]))
+     (doseq [old (->> (.listFiles dir)
+                      (filter #(and (.isFile %) (str/ends-with? (.getName %) ".log")))
+                      (sort-by #(.getName %))
+                      reverse
+                      (drop failure-limit))]
+       (.delete old))
+     name)))
+
+(defn- retain [config result]
+  (try (retain-failure! config result)
+       (catch Exception e (log config "failure-log outcome=error reason=" (ex-message e)) nil)))
 
 (defn inspect [opts]
   (inspection/read-deployment opts (tools/environment opts) {} (compute/requirements opts)))
@@ -158,7 +227,7 @@
   (let [result (wf/run redis/workflow (assoc (options config) :green/event :create))]
     (if (wf/failed? result)
       (log config "converge outcome=failed" (str "step=" (or (:green/step result) "unknown"))
-           (str "exit=" (:green/exit result)))
+           (str "exit=" (:green/exit result)) (str "retained=" (retain config result)))
       (let [state (inspect (options config)) node (first (get-in state [:cluster :nodes]))]
         (when-not (and (= "present" (:status state)) (:provider_id node))
           (log config "converge outcome=error reason=owned-state-unreadable")
@@ -189,7 +258,8 @@
                  (wf/run redis/workflow opts))]
     (log config "delete" (str "outcome=" (if (wf/failed? result) "failed" "destroyed"))
          (str "mode=" (if missing? "droplet-missing" "full"))
-         (when (wf/failed? result) (str "step=" (or (:green/step result) "unknown"))))
+         (when (wf/failed? result) (str "step=" (or (:green/step result) "unknown")))
+         (when (wf/failed? result) (str "retained=" (retain (assoc config :green/event :delete) result))))
     {:green/exit (if (wf/failed? result) 1 0)}))
 
 (defn package []
