@@ -99,6 +99,63 @@
               {:op "add" :path "/spec/suspend" :value true}]
              (json/parse-string (last @seen) true))))))
 
+(defn with-out-str-value [f] (let [r (atom nil)] (with-out-str (reset! r (f))) @r))
+(def stale-422 {:exit 1 :out "" :err "The request is invalid: the server rejected our request due to an error in our request"})
+(defn patch-value [args] (:value (first (json/parse-string (last args) true))))
+(def snapshot {:metadata {:uid "u" :resourceVersion "42"} :spec {:suspend false :deletionPolicy "Retain"}
+               :status {:phase "Reconciling"}})
+
+(deftest patch-retries-a-moved-resource-version-only
+  (with-redefs [tools/sleep! (fn [_] nil)]
+    (testing "a status write moved the resourceVersion: the second attempt carries the fresh one"
+      (let [patches (atom [])]
+        (with-redefs [tools/get-resource (constantly (-> snapshot (assoc-in [:metadata :resourceVersion] "43")
+                                                         (assoc-in [:status :phase] "Ready")))
+                      tools/run-command (fn [args _]
+                                          (swap! patches conj (patch-value args))
+                                          (if (= "42" (patch-value args)) stale-422 {:exit 0 :out "{\"ok\":true}" :err ""}))]
+          (is (= {:ok true} (with-out-str-value #(tools/patch-resource! opts snapshot [{:op "add" :path "/spec/suspend" :value true}]))))
+          (is (= ["42" "43"] @patches)))))
+    (testing "spec changed concurrently: fail without retrying"
+      (let [patches (atom 0)]
+        (with-redefs [tools/get-resource (constantly (-> snapshot (assoc-in [:metadata :resourceVersion] "43")
+                                                         (assoc-in [:spec :deletionPolicy] "Destroy")))
+                      tools/run-command (fn [_ _] (swap! patches inc) stale-422)]
+          (let [e (try (tools/patch-resource! opts snapshot [{:op "add" :path "/spec/suspend" :value true}]) nil (catch Exception e e))]
+            (is (str/includes? (ex-message e) "edited concurrently"))
+            (is (true? (:concurrent-edit (ex-data e))))
+            (is (= 1 @patches))))))
+    (testing "deletionTimestamp appeared: also a concurrent edit"
+      (with-redefs [tools/get-resource (constantly (-> snapshot (assoc-in [:metadata :resourceVersion] "43")
+                                                       (assoc-in [:metadata :deletionTimestamp] "now")))
+                    tools/run-command (fn [_ _] stale-422)]
+        (is (thrown-with-msg? Exception #"edited concurrently"
+                              (tools/patch-resource! opts snapshot [{:op "add" :path "/spec/suspend" :value true}])))))
+    (testing "any other kubectl error is not retried"
+      (let [patches (atom 0) reads (atom 0)]
+        (with-redefs [tools/get-resource (fn [_] (swap! reads inc) snapshot)
+                      tools/run-command (fn [_ _] (swap! patches inc) {:exit 1 :out "" :err "error: You must be logged in to the server (Unauthorized)"})]
+          (let [e (try (tools/patch-resource! opts snapshot [{:op "add" :path "/spec/suspend" :value true}]) nil (catch Exception e e))]
+            (is (str/includes? (ex-message e) "Unauthorized"))
+            (is (= 1 @patches))
+            (is (zero? @reads))))))
+    (testing "422 with an unmoved resourceVersion is the patch's own fault, not retried"
+      (let [patches (atom 0)]
+        (with-redefs [tools/get-resource (constantly snapshot)
+                      tools/run-command (fn [_ _] (swap! patches inc) stale-422)]
+          (let [e (try (tools/patch-resource! opts snapshot [{:op "add" :path "/spec/suspend" :value true}]) nil (catch Exception e e))]
+            (is (str/includes? (ex-message e) "server rejected our request"))
+            (is (= 1 @patches))))))
+    (testing "a resourceVersion that keeps moving is bounded"
+      (let [rv (atom 42) patches (atom 0)]
+        (with-redefs [tools/get-resource (fn [_] (assoc-in snapshot [:metadata :resourceVersion] (str (swap! rv inc))))
+                      tools/run-command (fn [_ _] (swap! patches inc) stale-422)]
+          (let [e (try (with-out-str (tools/patch-resource! opts snapshot [{:op "add" :path "/spec/suspend" :value true}])) nil (catch Exception e e))]
+            (is (str/includes? (ex-message e) "kept moving through 5 attempts"))
+            (is (= 5 @patches))))))))
+
+
+
 (deftest predicates
   (let [ready {:metadata {:generation 2}
                :status {:phase "Ready" :observedGeneration 2 :conditions [{:type "Ready" :status "True"}]}}]

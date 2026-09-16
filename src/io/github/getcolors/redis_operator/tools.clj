@@ -227,17 +227,70 @@
   (kubectl opts ["get" resource-type (:resource-name opts) "-n" (:namespace opts)
                  "--ignore-not-found" "-o" "json"] {:json? true}))
 
-(defn patch-resource!
-  "A JSON patch guarded by a resourceVersion test, so a concurrent edit fails
-  the operation instead of being overwritten."
-  [opts current patch]
+(def stale-patch-message "the server rejected our request due to an error in our request")
+(def patch-attempts 5)
+(def patch-retry-ms 2000)
+
+(defn- patch-once! [opts resource-version patch]
   (kubectl opts ["patch" resource-type (:resource-name opts) "-n" (:namespace opts)
                  "--type=json" "-o" "json" "-p"
                  (json/generate-string
-                  (into [{:op "test" :path "/metadata/resourceVersion"
-                          :value (get-in current [:metadata :resourceVersion])}]
+                  (into [{:op "test" :path "/metadata/resourceVersion" :value resource-version}]
                         patch))]
            {:json? true}))
+
+(defn- stale-patch? [e]
+  (and (= "patch" (:operation (ex-data e)))
+       (str/includes? (str (ex-message e)) stale-patch-message)))
+
+(defn- same-desired-state? [a b]
+  (and (= (:spec a) (:spec b))
+       (= (get-in a [:metadata :deletionTimestamp]) (get-in b [:metadata :deletionTimestamp]))
+       (= (get-in a [:metadata :uid]) (get-in b [:metadata :uid]))))
+
+(defn patch-resource!
+  "A JSON patch guarded by a resourceVersion test, so a concurrent edit fails
+  the operation instead of being overwritten.
+
+  The controller writes status twice per interval, and every status write
+  moves the resourceVersion, so the snapshot the caller holds is routinely
+  stale by the time the patch lands: the apiserver answers 422 for the
+  failed test op. That is not a concurrent edit. On that answer the resource
+  is re-read; if its spec, deletionTimestamp and UID are what the caller
+  saw, the patch is re-issued against the fresh resourceVersion, a bounded
+  number of times. If the desired state did change, the operation fails and
+  says so. Any other kubectl failure is not retried."
+  [opts current patch]
+  (loop [attempt 1 resource-version (get-in current [:metadata :resourceVersion])]
+    (let [outcome (try (patch-once! opts resource-version patch)
+                       (catch Exception e (if (stale-patch? e) e (throw e))))]
+      (if-not (instance? Throwable outcome)
+        outcome
+        (let [fresh (get-resource opts)]
+          (cond
+            (nil? fresh)
+            (throw (ex-info "RedisDeployment disappeared while patching" {:operation "patch"}))
+
+            (not (same-desired-state? current fresh))
+            (throw (ex-info (str "RedisDeployment was edited concurrently (resourceVersion "
+                                 resource-version " -> " (get-in fresh [:metadata :resourceVersion])
+                                 "); the patch was not applied")
+                            {:operation "patch" :concurrent-edit true}))
+
+            (= resource-version (get-in fresh [:metadata :resourceVersion]))
+            ;; Not a moved resourceVersion at all: the patch itself is invalid.
+            (throw outcome)
+
+            (>= attempt patch-attempts)
+            (throw (ex-info (str "resourceVersion kept moving through " patch-attempts
+                                 " attempts; the patch was not applied")
+                            {:operation "patch"}))
+
+            :else
+            (do (log "patch" (str "resourceVersion moved " resource-version " -> "
+                                  (get-in fresh [:metadata :resourceVersion]) " (status write); retrying"))
+                (sleep! patch-retry-ms)
+                (recur (inc attempt) (get-in fresh [:metadata :resourceVersion])))))))))
 
 (def controller-ready-line "RedisDeployment controller running")
 
