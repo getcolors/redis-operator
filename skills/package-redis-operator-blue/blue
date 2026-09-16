@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-PIN = "9303aa2d9b7b93827035f0e229c863a16739a572"
+PIN = "99e4e44d4ae1c46c3e78d0582ccfab51e77e8971"
 
 DEPENDENCIES = ['blue @ git+https://github.com/getcolors/blue.git@9bcd82890f04387256ba9a302d37eb30a638ae56', 'package-redis-blue @ git+https://github.com/getcolors/redis.git@520e2613d848ec65afed33dfeab2cbd6c47465aa#subdirectory=blue', 'colors-compute-blue @ git+https://github.com/getcolors/colors-compute.git@7e1c2349388ff2ca8a3da65a0c8cb888315b57f4#subdirectory=blue']
 
