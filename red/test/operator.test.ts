@@ -135,3 +135,68 @@ test("unreadable state never means absence; deletion retains ownership of absent
     ready: false,
   });
 });
+
+test("uncertain rehearsal remains suspended, confirmed failure resumes", async () => {
+  const { spyOn } = await import("bun:test");
+  const { rehearse } = await import("../src/operator.ts");
+  const directory = mkdtempSync(join(tmpdir(), "operator-rehearsal-"));
+  const cr = {
+    metadata: { uid: "uid", generation: 2, resourceVersion: "10" },
+    spec: {},
+    status: {},
+  };
+  const suspended = {
+    metadata: { uid: "uid", generation: 3, resourceVersion: "11" },
+    spec: { suspend: true },
+    status: { phase: "Suspended", observedGeneration: 3 },
+  };
+  const ready = spyOn(t, "waitReady").mockResolvedValue(cr);
+  const patch = spyOn(t, "patch").mockResolvedValue(suspended);
+  const get = spyOn(t, "getResource").mockResolvedValue(suspended);
+  const probe = spyOn(t, "probe").mockRejectedValue(
+    new Error("transport timeout"),
+  );
+  try {
+    await expect(rehearse({ ...fixture, workdir: directory })).rejects.toThrow(
+      "resource left suspended",
+    );
+    expect(patch).toHaveBeenCalledTimes(1);
+    patch.mockClear();
+    probe.mockResolvedValue({ rehearsalPassed: false });
+    await expect(rehearse({ ...fixture, workdir: directory })).rejects.toThrow(
+      "Backup rehearsal failed",
+    );
+    expect(patch).toHaveBeenCalledTimes(2);
+    expect(patch.mock.calls[1]![2][0]!.value).toBe(false);
+  } finally {
+    ready.mockRestore();
+    patch.mockRestore();
+    get.mockRestore();
+    probe.mockRestore();
+    rmSync(directory, { recursive: true });
+  }
+});
+
+test("blocked finalizer prevents controller deletion", async () => {
+  const { spyOn } = await import("bun:test");
+  const get = spyOn(t, "getResource").mockResolvedValue({
+    metadata: {},
+    spec: { deletionPolicy: "Destroy" },
+  });
+  const kubectl = spyOn(t, "kubectl").mockResolvedValue("");
+  const wait = spyOn(t, "waitFor").mockRejectedValue(
+    new Error("finalizer blocked"),
+  );
+  try {
+    await expect(w.deleteStep(fixture)).rejects.toThrow("finalizer blocked");
+    expect(
+      kubectl.mock.calls.some(
+        (call) => call[1][0] === "delete" && call[1][1] === "namespace",
+      ),
+    ).toBe(false);
+  } finally {
+    get.mockRestore();
+    kubectl.mockRestore();
+    wait.mockRestore();
+  }
+});
