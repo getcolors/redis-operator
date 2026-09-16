@@ -52,7 +52,7 @@
 ;; cannot resolve its own library says so rather than inventing a SHA or
 ;; silently falling back to whatever is lying around. `bb pin` refuses to stamp
 ;; a dirty or unpushed HEAD for the same reason.
-(def ^:private redis-operator-sha nil)
+(def ^:private redis-operator-sha "f163b488eebbf11761b8d7f94a1507bd2cd17cad")
 
 (def ^:private redis-operator-git-url "https://github.com/getcolors/redis-operator.git")
 (def ^:private green-git-url "https://github.com/getcolors/green.git")
