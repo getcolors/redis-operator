@@ -38,13 +38,19 @@ ENV COLORS_WORKDIR=/data/work
 ENTRYPOINT ["bb", "controller", "--in-cluster"]
 CMD ["colors-dev"]
 
+FROM --platform=$BUILDPLATFORM oven/bun:1.3.10 AS red-deps
+WORKDIR /app
+COPY package.json ./
+COPY red/package.json red/bun.lock ./red/
+RUN cd red && bun install --frozen-lockfile
+
 FROM oven/bun:1.3.10 AS bun
 FROM ghcr.io/astral-sh/uv:0.10.2 AS uv
 FROM base AS red
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY package.json ./
 COPY red/package.json red/bun.lock ./red/
-RUN cd red && bun install --frozen-lockfile
+COPY --from=red-deps /app/red/node_modules ./red/node_modules
 COPY red/src ./red/src
 COPY resources ./resources
 ENV COLORS_WORKDIR=/data/work
