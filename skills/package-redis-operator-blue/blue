@@ -14,6 +14,7 @@ DEPENDENCIES = ['blue @ git+https://github.com/getcolors/blue.git@9bcd82890f0438
 
 
 def main():
+    env = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}
     root = os.environ.get("REDIS_OPERATOR_LIB_ROOT")
     if root:
         project = (
@@ -56,13 +57,13 @@ def main():
                 "-m",
                 "package_redis_operator_blue",
             ]
-            raise SystemExit(subprocess.run([*command, *sys.argv[1:]]).returncode)
+            raise SystemExit(subprocess.run([*command, *sys.argv[1:]], env=env).returncode)
     else:
         sys.stderr.write(
             "blue: launcher not pinned; set REDIS_OPERATOR_LIB_ROOT to a checkout\n"
         )
         raise SystemExit(2)
-    raise SystemExit(subprocess.run([*command, *sys.argv[1:]]).returncode)
+    raise SystemExit(subprocess.run([*command, *sys.argv[1:]], env=env).returncode)
 
 
 if __name__ == "__main__":
