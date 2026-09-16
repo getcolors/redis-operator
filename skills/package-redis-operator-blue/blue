@@ -6,8 +6,11 @@
 import os
 import subprocess
 import sys
+import tempfile
 
 PIN = "9303aa2d9b7b93827035f0e229c863a16739a572"
+
+DEPENDENCIES = ['blue @ git+https://github.com/getcolors/blue.git@9bcd82890f04387256ba9a302d37eb30a638ae56', 'package-redis-blue @ git+https://github.com/getcolors/redis.git@520e2613d848ec65afed33dfeab2cbd6c47465aa#subdirectory=blue', 'colors-compute-blue @ git+https://github.com/getcolors/colors-compute.git@7e1c2349388ff2ca8a3da65a0c8cb888315b57f4#subdirectory=blue']
 
 def main():
     root = os.environ.get("REDIS_OPERATOR_LIB_ROOT")
@@ -15,7 +18,13 @@ def main():
         project = root if os.path.isfile(os.path.join(root, "pyproject.toml")) else os.path.join(root, "blue")
         command = ["uv", "run", "--project", project, "python", "-m", "package_redis_operator_blue"]
     elif PIN:
-        command = ["uv", "run", "--isolated", "--with", "package-redis-operator-blue @ git+https://github.com/getcolors/redis-operator.git@" + PIN + "#subdirectory=blue", "python", "-m", "package_redis_operator_blue"]
+        with tempfile.TemporaryDirectory(prefix="redis-operator-blue-") as directory:
+            import json
+            package = "package-redis-operator-blue @ git+https://github.com/getcolors/redis-operator.git@" + PIN + "#subdirectory=blue"
+            with open(os.path.join(directory, "pyproject.toml"), "w") as handle:
+                handle.write('[project]\nname = "redis-operator-launcher"\nversion = "0.0.0"\nrequires-python = ">=3.11"\ndependencies = ' + json.dumps([package, *DEPENDENCIES]) + '\n[tool.uv]\noverride-dependencies = ' + json.dumps(DEPENDENCIES) + '\n')
+            command = ["uv", "run", "--project", directory, "python", "-m", "package_redis_operator_blue"]
+            raise SystemExit(subprocess.run([*command, *sys.argv[1:]]).returncode)
     else:
         sys.stderr.write("blue: launcher not pinned; set REDIS_OPERATOR_LIB_ROOT to a checkout\n")
         raise SystemExit(2)

@@ -135,7 +135,7 @@ function installToCache() {
   const staging = mkdtempSync(join(root, `.${key}.`));
   writeFileSync(
     join(staging, "package.json"),
-    `${JSON.stringify({ name: "package-redis-operator-red-cache", private: true, dependencies: PINS }, null, 2)}\n`,
+    `${JSON.stringify({ name: "package-redis-operator-red-cache", private: true, dependencies: PINS, overrides: { red: PINS.red, "colors-compute-red": PINS["colors-compute-red"] } }, null, 2)}\n`,
   );
   const installed = Bun.spawnSync([process.execPath, "install"], {
     cwd: staging,
