@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 
-PIN = None
+PIN = "9303aa2d9b7b93827035f0e229c863a16739a572"
 
 def main():
     root = os.environ.get("REDIS_OPERATOR_LIB_ROOT")
