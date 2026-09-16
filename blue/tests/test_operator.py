@@ -283,3 +283,35 @@ def test_probe_tokens_and_environment():
         a.check_environment(
             {**{k: "secret" for k in t.CREDENTIALS}, "COLORS_PAR_PROFILE": "other"}
         )
+
+
+@pytest.mark.parametrize("body", [b"", b"null", b"false", b"0", b"{}", b"[]"])
+async def test_provider_empty_success_never_means_absent(monkeypatch, body):
+    from unittest.mock import MagicMock
+
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = body
+    monkeypatch.setattr(t.urllib.request, "urlopen", MagicMock(return_value=response))
+    with pytest.raises(RuntimeError, match="absence requires HTTP 404"):
+        await t.digitalocean("test-token", "get", "droplets/12")
+
+
+async def test_provider_absence_requires_404_and_delete_allows_empty(monkeypatch):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(
+        t.urllib.request,
+        "urlopen",
+        MagicMock(
+            side_effect=t.urllib.error.HTTPError("url", 404, "missing", {}, None)
+        ),
+    )
+    assert await t.digitalocean("test-token", "get", "droplets/12") is None
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = b""
+    monkeypatch.setattr(t.urllib.request, "urlopen", MagicMock(return_value=response))
+    assert await t.digitalocean("test-token", "delete", "droplets/12") is None
+    response.__enter__.return_value.read.return_value = b'{"droplet":{"id":12}}'
+    assert await t.digitalocean("test-token", "get", "droplets/12") == {
+        "droplet": {"id": 12}
+    }

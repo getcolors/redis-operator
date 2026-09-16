@@ -200,3 +200,30 @@ test("blocked finalizer prevents controller deletion", async () => {
     wait.mockRestore();
   }
 });
+
+test("provider absence requires HTTP 404, never an empty successful response", async () => {
+  const { spyOn } = await import("bun:test");
+  const fetch = spyOn(globalThis, "fetch");
+  try {
+    for (const body of ["", "null", "false", "0", "{}", "[]"]) {
+      fetch.mockResolvedValue(new Response(body, { status: 200 }));
+      await expect(
+        t.digitalocean("test-token", "get", "droplets/12"),
+      ).rejects.toThrow("absence requires HTTP 404");
+    }
+    fetch.mockResolvedValue(new Response("", { status: 404 }));
+    expect(await t.digitalocean("test-token", "get", "droplets/12")).toBeNull();
+    fetch.mockResolvedValue(
+      new Response(JSON.stringify({ droplet: { id: 12 } }), { status: 200 }),
+    );
+    expect(await t.digitalocean("test-token", "get", "droplets/12")).toEqual({
+      droplet: { id: 12 },
+    });
+    fetch.mockResolvedValue(new Response(null, { status: 204 }));
+    expect(
+      await t.digitalocean("test-token", "delete", "droplets/12"),
+    ).toBeNull();
+  } finally {
+    fetch.mockRestore();
+  }
+});

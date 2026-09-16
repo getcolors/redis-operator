@@ -378,7 +378,14 @@ async def digitalocean(token, method, path):
         try:
             with urllib.request.urlopen(req, timeout=45) as response:
                 body = response.read()
-                return json.loads(body) if body else None
+                decoded = json.loads(body) if body else None
+                if method.lower() == "get" and (
+                    not isinstance(decoded, dict) or not decoded
+                ):
+                    raise RuntimeError(
+                        "DigitalOcean GET returned an invalid object; absence requires HTTP 404"
+                    )
+                return decoded
         except urllib.error.HTTPError as exc:
             if exc.code == 404 and method.lower() == "get":
                 return None

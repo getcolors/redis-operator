@@ -367,7 +367,19 @@ export async function digitalocean(
       `DigitalOcean ${method.toUpperCase()} failed: HTTP ${response.status}`,
     );
   const body = await response.text();
-  return body ? JSON.parse(body) : null;
+  const decoded = body ? JSON.parse(body) : null;
+  if (
+    method.toLowerCase() === "get" &&
+    (!decoded ||
+      typeof decoded !== "object" ||
+      Array.isArray(decoded) ||
+      !Object.keys(decoded).length)
+  ) {
+    throw new Error(
+      "DigitalOcean GET returned an invalid object; absence requires HTTP 404",
+    );
+  }
+  return decoded;
 }
 export function ownedDroplet(
   droplet: Obj | null,
